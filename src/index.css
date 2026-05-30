@@ -1,0 +1,233 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Cinzel", Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-gold-light: #fef08a; /* yellow-200 */
+  --color-gold-med: #fbbf24;   /* amber-400 */
+  --color-gold-dark: #b45309;  /* amber-700 */
+  --color-luxury-black: #050505;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-luxury-black);
+    color: #f3f4f6;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Custom golden gradient ambient animation */
+@keyframes goldGlow {
+  0%, 100% {
+    opacity: 0.18;
+    transform: scale(1) translate(0px, 0px);
+  }
+  50% {
+    opacity: 0.32;
+    transform: scale(1.1) translate(10px, -10px);
+  }
+}
+
+.animate-gold-glow {
+  animation: goldGlow 12s ease-in-out infinite;
+}
+
+/* Shimmering lux text effect */
+.shimmer-text {
+  background: linear-gradient(
+    to right,
+    #936a0d 0%,
+    #fbbf24 25%,
+    #fff2b2 50%,
+    #fbbf24 75%,
+    #936a0d 100%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: shine 5s linear infinite;
+}
+
+@keyframes shine {
+  to {
+    background-position: 200% center;
+  }
+}
+
+/* Sophisticated custom glassmorphism inputs */
+.luxury-input {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.luxury-input:focus {
+  border-color: rgba(245, 158, 11, 0.5); /* focus:border-amber-500/50 */
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.12);
+  background: rgba(10, 10, 10, 0.85);
+  outline: none;
+}
+
+/* Hide scrollbar */
+.hidden-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hidden-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom minimal scrollbar with golden thumb color style matching the luxury dark motif */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.25);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.55);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(245, 158, 11, 0.25) rgba(0, 0, 0, 0.15);
+}
+
+
+/* MAIN MODULE ANIMATED PREMIUM BACKGROUNDS */
+@keyframes movingBg {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes floatBlob1 {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+    opacity: 0.25;
+  }
+  33% {
+    transform: translate(40px, -60px) scale(1.15);
+    opacity: 0.35;
+  }
+  66% {
+    transform: translate(-30px, 30px) scale(0.9);
+    opacity: 0.28;
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+    opacity: 0.25;
+  }
+}
+
+@keyframes floatBlob2 {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+    opacity: 0.28;
+  }
+  50% {
+    transform: translate(-50px, 50px) scale(1.2);
+    opacity: 0.38;
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+    opacity: 0.28;
+  }
+}
+
+.animate-float-1 {
+  animation: floatBlob1 18s ease-in-out infinite;
+}
+
+.animate-float-2 {
+  animation: floatBlob2 22s ease-in-out infinite;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-1, 
+  .animate-float-2, 
+  .animate-gold-glow, 
+  .finance-animated-bg, 
+  .operations-animated-bg, 
+  .hr-animated-bg, 
+  .management-animated-bg, 
+  .setup-animated-bg, 
+  .modules-animated-bg, 
+  .login-animated-bg {
+    animation: none !important;
+    transition: none !important;
+    background-size: 100% 100% !important;
+  }
+}
+
+/* Finance: gold mixed with soft blue */
+.finance-animated-bg {
+  background: linear-gradient(135deg, #101c40 0%, #1e2a5a 30%, #3e2f18 70%, #12182d 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+
+/* Operations: green mixed with gold */
+.operations-animated-bg {
+  background: linear-gradient(135deg, #0d1e17 0%, #143d2c 30%, #42361d 70%, #0b1a18 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+
+/* HR: dark cream mixed with gold */
+.hr-animated-bg {
+  background: linear-gradient(135deg, #1f1a14 0%, #3e3325 30%, #544633 70%, #17130f 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+
+/* Management: dark orange mixed with gold */
+.management-animated-bg {
+  background: linear-gradient(135deg, #1e110a 0%, #4a2a15 30%, #4c3010 70%, #1b0e08 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+
+/* Setup: premium gold control-center theme */
+.setup-animated-bg {
+  background: linear-gradient(135deg, #1c1712 0%, #3a2c1d 45%, #4c351f 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+
+/* Modules page/terminal: transparent gold theme */
+.modules-animated-bg {
+  background: linear-gradient(135deg, #140d08 0%, #2d1e11 45%, #3f2a17 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+
+/* Login: premium gold theme */
+.login-animated-bg {
+  background: linear-gradient(135deg, #150a04 0%, #2e1d0d 35%, #453216 70%, #1a130a 100%);
+  background-size: 400% 400%;
+  animation: movingBg 25s ease-in-out infinite;
+}
+

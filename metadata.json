@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: Meqk Accounting Vol.1",
+  "description": "High-luxury gold themed accounting portal featuring Supabase Auth, React Hook Form validation, and executive glassmorphic styling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
