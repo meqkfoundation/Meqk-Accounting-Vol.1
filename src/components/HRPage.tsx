@@ -292,6 +292,26 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
       ]
     },
     {
+      id: "daily_buses",
+      name: "Daily Buses",
+      category: "Performance & Shortages" as const,
+      view: "v_daily_bus_operations",
+      layout: "landscape" as const,
+      icon: Calendar,
+      hasCompanyId: true,
+      columns: [
+        { key: "date", label: "Date", type: "date" as const, align: "left" as const },
+        { key: "conductor", label: "Conductor", type: "text" as const, align: "left" as const },
+        { key: "driver", label: "Driver", type: "text" as const, align: "left" as const },
+        { key: "bus", label: "Bus", type: "text" as const, align: "left" as const },
+        { key: "route", label: "Route", type: "text" as const, align: "left" as const },
+        { key: "one_way", label: "Oneway", type: "number" as const, align: "right" as const },
+        { key: "enroute", label: "Enroute", type: "number" as const, align: "right" as const },
+        { key: "total", label: "Total", type: "number" as const, align: "right" as const },
+        { key: "user_id", label: "User ID", type: "text" as const, align: "left" as const }
+      ]
+    },
+    {
       id: "staff_details",
       name: "Staff Details",
       category: "Staff Master Data" as const,
@@ -305,6 +325,7 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
         { key: "occupation", label: "Occupation", type: "text" as const, align: "left" as const },
         { key: "phone_number", label: "Phone Number", type: "text" as const, align: "left" as const },
         { key: "account_number", label: "Account Number", type: "text" as const, align: "left" as const },
+        { key: "tin_number", label: "TIN", type: "text" as const, align: "left" as const },
         { key: "nida_number", label: "NIDA Number", type: "text" as const, align: "left" as const },
         { key: "address", label: "Address", type: "text" as const, align: "left" as const },
         { key: "employment_date", label: "Employment Date", type: "date" as const, align: "left" as const },
@@ -504,6 +525,10 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
           const sum = reportData.reduce((acc, row) => acc + (Number(row[col.key]) || 0), 0);
           return sum;
         }
+        if (["one_way", "enroute", "total"].includes(col.key)) {
+          const sum = reportData.reduce((acc, row) => acc + (Number(row[col.key]) || 0), 0);
+          return sum;
+        }
         return "";
       });
       aoa.push(totalsRow);
@@ -582,6 +607,10 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
         ].includes(col.key)) {
           const sum = reportData.reduce((acc, row) => acc + (Number(row[col.key]) || 0), 0);
           return formatTZSMoney(sum);
+        }
+        if (["one_way", "enroute", "total"].includes(col.key)) {
+          const sum = reportData.reduce((acc, row) => acc + (Number(row[col.key]) || 0), 0);
+          return String(sum);
         }
         return "";
       });
@@ -954,6 +983,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
     full_name: "",
     occupation_id: "",
     office_id: "",
+    tin_number: "",
+    account_number: "",
     nida_number: "",
     phone_number: "",
     address: "",
@@ -980,6 +1011,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
         full_name: regForm.full_name.trim(),
         occupation_id: regForm.occupation_id || null,
         office_id: regForm.office_id || null,
+        tin_number: regForm.tin_number.trim() || null,
+        account_number: regForm.account_number.trim() || null,
         nida_number: regForm.nida_number.trim() || null,
         phone_number: regForm.phone_number.trim() || null,
         address: regForm.address.trim() || null,
@@ -1000,6 +1033,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
         full_name: "",
         occupation_id: "",
         office_id: "",
+        tin_number: "",
+        account_number: "",
         nida_number: "",
         phone_number: "",
         address: "",
@@ -1077,6 +1112,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
       full_name: staff.full_name || "",
       occupation_id: staff.occupation_id || "",
       office_id: staff.office_id || "",
+      tin_number: staff.tin_number || "",
+      account_number: staff.account_number || "",
       nida_number: staff.nida_number || "",
       phone_number: staff.phone_number || "",
       address: staff.address || "",
@@ -1101,6 +1138,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
           full_name: selectedStaff.full_name,
           occupation_id: selectedStaff.occupation_id || null,
           office_id: selectedStaff.office_id || null,
+          tin_number: selectedStaff.tin_number || null,
+          account_number: selectedStaff.account_number || null,
           nida_number: selectedStaff.nida_number || null,
           phone_number: selectedStaff.phone_number || null,
           address: selectedStaff.address || null,
@@ -1930,6 +1969,28 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                 onChange={(e) => setRegForm(prev => ({ ...prev, nida_number: e.target.value }))}
                               />
                             </div>
+
+                            <div>
+                              <label className="block text-[10px] uppercase font-mono text-neutral-400 mb-1.5 font-sans">TIN</label>
+                              <input
+                                type="text"
+                                className="w-full bg-[#180609] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500/40 h-[40px]"
+                                placeholder="TIN..."
+                                value={regForm.tin_number}
+                                onChange={(e) => setRegForm(prev => ({ ...prev, tin_number: e.target.value }))}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] uppercase font-mono text-neutral-400 mb-1.5 font-sans">Account Number</label>
+                              <input
+                                type="text"
+                                className="w-full bg-[#180609] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500/40 h-[40px]"
+                                placeholder="Account Number..."
+                                value={regForm.account_number}
+                                onChange={(e) => setRegForm(prev => ({ ...prev, account_number: e.target.value }))}
+                              />
+                            </div>
                           </div>
                         </div>
 
@@ -2177,6 +2238,27 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                     className="w-full bg-[#180609] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500/50"
                                     value={selectedStaff.phone_number}
                                     onChange={(e) => setSelectedStaff((prev: any) => ({ ...prev, phone_number: e.target.value }))}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[9px] font-mono uppercase text-neutral-400 mb-1">TIN</label>
+                                  <input
+                                    type="text"
+                                    className="w-full bg-[#180609] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                                    value={selectedStaff.tin_number || ""}
+                                    onChange={(e) => setSelectedStaff((prev: any) => ({ ...prev, tin_number: e.target.value }))}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-mono uppercase text-neutral-400 mb-1">Account Number</label>
+                                  <input
+                                    type="text"
+                                    className="w-full bg-[#180609] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                                    value={selectedStaff.account_number || ""}
+                                    onChange={(e) => setSelectedStaff((prev: any) => ({ ...prev, account_number: e.target.value }))}
                                   />
                                 </div>
                               </div>
@@ -2915,6 +2997,14 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                       return (
                                         <td key={col.key} className="p-3 text-right font-mono font-black border-l border-amber-500/10">
                                           {formatTZSMoney(sum)}
+                                        </td>
+                                      );
+                                    }
+                                    if (["one_way", "enroute", "total"].includes(col.key)) {
+                                      const sum = reportData.reduce((acc, row) => acc + (Number(row[col.key]) || 0), 0);
+                                      return (
+                                        <td key={col.key} className="p-3 text-right font-mono font-black border-l border-amber-500/10">
+                                          {sum}
                                         </td>
                                       );
                                     }
