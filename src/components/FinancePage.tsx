@@ -3940,6 +3940,24 @@ const CATEGORIES = [
 
 const REPORTS_CONFIG: ReportDefinition[] = [
   {
+    id: "daily_buses",
+    name: "Daily Buses",
+    category: "Core Financial Reports",
+    view: "v_daily_bus_operations",
+    layout: "landscape",
+    columns: [
+      { key: "date", label: "Date", type: "date", align: "left" },
+      { key: "conductor", label: "Conductor", type: "text", align: "left" },
+      { key: "driver", label: "Driver", type: "text", align: "left" },
+      { key: "bus", label: "Bus", type: "text", align: "left" },
+      { key: "route", label: "Route", type: "text", align: "left" },
+      { key: "one_way", label: "Oneway", type: "number", align: "right" },
+      { key: "enroute", label: "Enroute", type: "number", align: "right" },
+      { key: "total", label: "Total", type: "number", align: "right" },
+      { key: "user_id", label: "User ID", type: "text", align: "left" }
+    ]
+  },
+  {
     id: "invoice_report",
     name: "Invoice Report",
     category: "Core Financial Reports",
@@ -4235,7 +4253,8 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
           "balance_sheet",
           "account_statement",
           "monthly_expenses_report",
-          "monthly_income_statement"
+          "monthly_income_statement",
+          "daily_buses"
         ].includes(activeReport.id);
 
         if (isAffectedReport) {
@@ -4249,6 +4268,8 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
             selectStr = "month,account,amount,company_id";
           } else if (activeReport.id === "monthly_income_statement") {
             selectStr = "month,account,nature,amount,cumulative_net_profit,company_id";
+          } else if (activeReport.id === "daily_buses") {
+            selectStr = "date,conductor,driver,bus,route,one_way,enroute,total,user_id,company_id";
           }
 
           let query = supabase.from(viewName).select(selectStr).eq("company_id", activeCompanyId);
