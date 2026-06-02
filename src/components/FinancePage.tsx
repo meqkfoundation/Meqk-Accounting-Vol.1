@@ -2155,6 +2155,15 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
             return null;
           };
 
+          const isCellEmpty = (val: any) => {
+            if (val === undefined || val === null) return true;
+            if (typeof val === "string") {
+              const trimmed = val.trim();
+              return trimmed === "" || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined";
+            }
+            return false;
+          };
+
           const matchedTypeId = findMatchByNameOnly(rawType, invoiceTypes);
           const matchedStaffId = findMatchByNameOnly(rawStaff, staffs);
           const matchedBusId = findMatchByNameOnly(rawBus, buses);
@@ -2182,16 +2191,16 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
           if (!rowData.invoice_date) {
             rowData.errors.push("Invalid invoice date");
           }
-          if (!rowData.invoice_type_id) {
+          if (!isCellEmpty(rawType) && !rowData.invoice_type_id) {
             rowData.errors.push("Unmatched invoice type name");
           }
-          if (!rowData.staff_id) {
+          if (!isCellEmpty(rawStaff) && !rowData.staff_id) {
             rowData.errors.push("Unmatched staff name");
           }
-          if (!rowData.bus_id) {
+          if (!isCellEmpty(rawBus) && !rowData.bus_id) {
             rowData.errors.push("Unmatched bus plate number");
           }
-          if (!rowData.route_id) {
+          if (!isCellEmpty(rawRoute) && !rowData.route_id) {
             rowData.errors.push("Unmatched route name");
           }
           if (isNaN(amt) || amt <= 0) {
