@@ -1916,6 +1916,7 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
 
   // Excel Bulk upload states
   const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [excelMatchingLoading, setExcelMatchingLoading] = useState(false);
   const [allParsedRows, setAllParsedRows] = useState<any[]>([]);
   const [validatedRows, setValidatedRows] = useState<any[]>([]);
   const [invalidRows, setInvalidRows] = useState<any[]>([]);
@@ -2040,8 +2041,9 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
     setInvalidRows([]);
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
+        setExcelMatchingLoading(true);
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const sheetName = workbook.SheetNames[0];
@@ -2052,6 +2054,7 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
         
         if (rawJsonList.length === 0) {
           setExcelError("The uploaded spreadsheet contains no records or rows.");
+          setExcelMatchingLoading(false);
           return;
         }
 
@@ -2072,7 +2075,93 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
           return undefined;
         };
 
-        rawJsonList.forEach((row, idx) => {
+        // Parse various date formats robustly
+        const parseExcelDateValue = (raw: any): string => {
+          if (raw === undefined || raw === null) return "";
+          const num = Number(raw);
+          if (typeof raw === "number" || (!isNaN(num) && String(raw).trim() !== "" && num > 10000)) {
+            try {
+              const dateObj = XLSX.SSF.parse_date_code(num);
+              if (dateObj) {
+                const y = dateObj.y;
+                const m = String(dateObj.m).padStart(2, "0");
+                const d = String(dateObj.d).padStart(2, "0");
+                return `${y}-${m}-${d}`;
+              }
+            } catch (e) {
+              console.error("Error parsing serial date:", e);
+            }
+          }
+          const str = String(raw).trim();
+          if (!str) return "";
+
+          // Support YYYY-MM-DD
+          let m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+          if (m) {
+            return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+          }
+
+          // Support DD/MM/YYYY
+          m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+          if (m) {
+            return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+          }
+
+          // Try native Date.parse
+          const parsed = Date.parse(str);
+          if (!isNaN(parsed)) {
+            const dObj = new Date(parsed);
+            const y = dObj.getFullYear();
+            const mo = String(dObj.getMonth() + 1).padStart(2, "0");
+            const d = String(dObj.getDate()).padStart(2, "0");
+            return `${y}-${mo}-${d}`;
+          }
+
+          // Slower manual parsing for strings like "30-May-2026", "30 May 2026"
+          const monthsAbbr = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+          const monthsFull = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+          
+          const wordMonthMatch = str.match(/^(\d{1,2})[\/\-\s]+([a-zA-Z]+)[\/\-\s]+(\d{4})$/);
+          if (wordMonthMatch) {
+            const day = wordMonthMatch[1].padStart(2, "0");
+            const monthWord = wordMonthMatch[2].toLowerCase();
+            const year = wordMonthMatch[3];
+            let monthIdx = monthsAbbr.indexOf(monthWord.substring(0, 3));
+            if (monthIdx === -1) {
+              monthIdx = monthsFull.indexOf(monthWord);
+            }
+            if (monthIdx !== -1) {
+              const monthStr = String(monthIdx + 1).padStart(2, "0");
+              return `${year}-${monthStr}-${day}`;
+            }
+          }
+
+          return "";
+        };
+
+        const findMatchByNameOnly = (rawVal: any, sourceList: DropdownOption[]) => {
+          if (rawVal === undefined || rawVal === null) return null;
+          const needle = String(rawVal).toLowerCase().trim();
+          if (!needle) return null;
+          const nameMatch = sourceList.find(item => String(item.name).toLowerCase().trim() === needle);
+          if (nameMatch) return nameMatch.id;
+          return null;
+        };
+
+        const isCellEmpty = (val: any) => {
+          if (val === undefined || val === null) return true;
+          if (typeof val === "string") {
+            const trimmed = val.trim();
+            return trimmed === "" || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined";
+          }
+          return false;
+        };
+
+        const activeCompanyId = currentUserProfile?.company_id;
+
+        // Process rows and perform async rpc validations row-by-row
+        for (let i = 0; i < rawJsonList.length; i++) {
+          const row = rawJsonList[i];
           const rawDate = resolveField(row, ["invoice_date", "date", "invoice date", "invoice-date"]);
           const rawType = resolveField(row, ["invoice_type", "type", "invoice_type_id", "type_id", "invoice type"]);
           const rawStaff = resolveField(row, ["staff", "staff_name", "driver", "conductor", "staff_id", "staff id"]);
@@ -2080,98 +2169,69 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
           const rawRoute = resolveField(row, ["route", "route_name", "route name", "route_id", "route id"]);
           const rawAmount = resolveField(row, ["gross_amount", "amount", "gross amount", "gross-amount"]);
 
-          // Parse various date formats robustly
-          const parseExcelDateValue = (raw: any): string => {
-            if (raw === undefined || raw === null) return "";
-            if (typeof raw === "number" && raw > 10000) {
-              try {
-                const dateObj = XLSX.SSF.parse_date_code(raw);
-                if (dateObj) {
-                  const y = dateObj.y;
-                  const m = String(dateObj.m).padStart(2, "0");
-                  const d = String(dateObj.d).padStart(2, "0");
-                  return `${y}-${m}-${d}`;
-                }
-              } catch (e) {
-                console.error("Error parsing serial date:", e);
-              }
-            }
-            const str = String(raw).trim();
-            if (!str) return "";
-
-            // Support YYYY-MM-DD
-            let m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-            if (m) {
-              return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
-            }
-
-            // Support DD/MM/YYYY
-            m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-            if (m) {
-              return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-            }
-
-            // Try native Date.parse
-            const parsed = Date.parse(str);
-            if (!isNaN(parsed)) {
-              const dObj = new Date(parsed);
-              const y = dObj.getFullYear();
-              const mo = String(dObj.getMonth() + 1).padStart(2, "0");
-              const d = String(dObj.getDate()).padStart(2, "0");
-              return `${y}-${mo}-${d}`;
-            }
-
-            // Slower manual parsing for strings like "30-May-2026", "30 May 2026"
-            const monthsAbbr = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-            const monthsFull = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-            
-            const wordMonthMatch = str.match(/^(\d{1,2})[\/\-\s]+([a-zA-Z]+)[\/\-\s]+(\d{4})$/);
-            if (wordMonthMatch) {
-              const day = wordMonthMatch[1].padStart(2, "0");
-              const monthWord = wordMonthMatch[2].toLowerCase();
-              const year = wordMonthMatch[3];
-              let monthIdx = monthsAbbr.indexOf(monthWord.substring(0, 3));
-              if (monthIdx === -1) {
-                monthIdx = monthsFull.indexOf(monthWord);
-              }
-              if (monthIdx !== -1) {
-                const monthStr = String(monthIdx + 1).padStart(2, "0");
-                return `${year}-${monthStr}-${day}`;
-              }
-            }
-
-            return "";
-          };
-
           const excelRowDate = parseExcelDateValue(rawDate);
-
-          // Case insensitive mapping to lookup values by human-readable names only
-          const findMatchByNameOnly = (rawVal: any, sourceList: DropdownOption[]) => {
-            if (rawVal === undefined || rawVal === null) return null;
-            const needle = String(rawVal).toLowerCase().trim();
-            if (!needle) return null;
-            const nameMatch = sourceList.find(item => String(item.name).toLowerCase().trim() === needle);
-            if (nameMatch) return nameMatch.id;
-            return null;
-          };
-
-          const isCellEmpty = (val: any) => {
-            if (val === undefined || val === null) return true;
-            if (typeof val === "string") {
-              const trimmed = val.trim();
-              return trimmed === "" || trimmed.toLowerCase() === "null" || trimmed.toLowerCase() === "undefined";
-            }
-            return false;
-          };
-
-          const matchedTypeId = findMatchByNameOnly(rawType, invoiceTypes);
-          const matchedStaffId = findMatchByNameOnly(rawStaff, staffs);
-          const matchedBusId = findMatchByNameOnly(rawBus, buses);
-          const matchedRouteId = findMatchByNameOnly(rawRoute, routes);
+          
+          const matchedTypeId = isCellEmpty(rawType) ? null : findMatchByNameOnly(rawType, invoiceTypes);
+          const matchedBusId = isCellEmpty(rawBus) ? null : findMatchByNameOnly(rawBus, buses);
+          const matchedRouteId = isCellEmpty(rawRoute) ? null : findMatchByNameOnly(rawRoute, routes);
           const amt = Number(rawAmount);
 
+          let matStaffId = null;
+          let matStaffName = "";
+          let matStaffScore = null;
+          const errorsList: string[] = [];
+
+          if (!excelRowDate) {
+            errorsList.push("Invalid invoice date");
+          }
+          if (!isCellEmpty(rawType) && !matchedTypeId) {
+            errorsList.push("Unmatched invoice type name");
+          }
+
+          // Fuzzy staff lookup using match_staff_for_invoice RPC
+          if (!isCellEmpty(rawStaff)) {
+            try {
+              const { data: rpcData, error: rpcErr } = await supabase.rpc("match_staff_for_invoice", {
+                p_staff_name: String(rawStaff).trim(),
+                p_company_id: activeCompanyId,
+              });
+
+              if (rpcErr) {
+                console.error(`Fuzzy match RPC error for row ${i + 1}, staff="${rawStaff}":`, rpcErr);
+                errorsList.push("Staff matching failed");
+              } else {
+                const match = rpcData?.[0];
+                if (match && match.match_score >= 0.75) {
+                  matStaffId = match.staff_id;
+                  matStaffName = match.staff_name;
+                  matStaffScore = match.match_score;
+                  console.log(`Row ${i + 1}: original="${rawStaff}" matched="${match.staff_name}" score=${match.match_score}`);
+                } else {
+                  errorsList.push("Unmatched staff name");
+                  console.log(`Row ${i + 1}: original="${rawStaff}" unmatched or below threshold`, match);
+                }
+              }
+            } catch (err: any) {
+              console.error(`Fuzzy match exception for row ${i + 1}:`, err);
+              errorsList.push("Staff matching failed");
+            }
+          } else {
+            matStaffId = null;
+          }
+
+          if (!isCellEmpty(rawBus) && !matchedBusId) {
+            errorsList.push("Unmatched bus plate number");
+          }
+          if (!isCellEmpty(rawRoute) && !matchedRouteId) {
+            errorsList.push("Unmatched route name");
+          }
+          if (isNaN(amt) || amt <= 0) {
+            errorsList.push("Invalid amount");
+          }
+
           const rowData = {
-            index: idx + 1,
+            index: i + 1,
+            rowNumber: i + 1,
             originalRow: row,
             invoice_date: excelRowDate,
             rawDateText: rawDate || "None",
@@ -2181,31 +2241,16 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
             rawRouteText: rawRoute || "None",
             rawAmountText: rawAmount || "None",
             invoice_type_id: matchedTypeId,
-            staff_id: matchedStaffId,
+            invoice_type_name: invoiceTypes.find(t => t.id === matchedTypeId)?.name || rawType || "",
+            staff_id: matStaffId,
+            staff_name_original: rawStaff || "",
+            matched_staff_name: matStaffName,
+            match_score: matStaffScore,
             bus_id: matchedBusId,
             route_id: matchedRouteId,
             gross_amount: isNaN(amt) ? 0 : amt,
-            errors: [] as string[],
+            errors: errorsList,
           };
-
-          if (!rowData.invoice_date) {
-            rowData.errors.push("Invalid invoice date");
-          }
-          if (!isCellEmpty(rawType) && !rowData.invoice_type_id) {
-            rowData.errors.push("Unmatched invoice type name");
-          }
-          if (!isCellEmpty(rawStaff) && !rowData.staff_id) {
-            rowData.errors.push("Unmatched staff name");
-          }
-          if (!isCellEmpty(rawBus) && !rowData.bus_id) {
-            rowData.errors.push("Unmatched bus plate number");
-          }
-          if (!isCellEmpty(rawRoute) && !rowData.route_id) {
-            rowData.errors.push("Unmatched route name");
-          }
-          if (isNaN(amt) || amt <= 0) {
-            rowData.errors.push("Invalid amount");
-          }
 
           parsedList.push(rowData);
           if (rowData.errors.length === 0) {
@@ -2213,7 +2258,7 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
           } else {
             invalidList.push(rowData);
           }
-        });
+        }
 
         setAllParsedRows(parsedList);
         setValidatedRows(validList);
@@ -2221,6 +2266,8 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
       } catch (err: any) {
         console.error("Error processing Excel buffer:", err);
         setExcelError("System failed to parse spreadsheet. Ensure it is a valid Excel file.");
+      } finally {
+        setExcelMatchingLoading(false);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -2238,12 +2285,13 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
           invoice_date: row.invoice_date,
           invoice_type_id: row.invoice_type_id,
           staff_id: row.staff_id,
-          bus_id: row.bus_id,
-          route_id: row.route_id,
+          bus_id: row.bus_id ?? null,
+          route_id: row.route_id ?? null,
           gross_amount: Number(row.gross_amount),
         };
-        if (currentUserProfile?.company_id) {
-          item.company_id = currentUserProfile.company_id;
+        const activeCompanyId = currentUserProfile?.company_id;
+        if (activeCompanyId) {
+          item.company_id = activeCompanyId;
         }
         return item;
       });
@@ -2737,6 +2785,19 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
             </div>
 
             {/* Error & Success announcements */}
+            {excelMatchingLoading && (
+              <div className="p-4 bg-amber-950/40 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center gap-2.5 mt-6 font-mono leading-relaxed">
+                <span className="relative flex h-3 w-3 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                </span>
+                <div>
+                  <strong className="font-semibold block uppercase tracking-wider text-[10px] mb-1">Fuzzy Matching in Progress</strong>
+                  Matching staff names using online database registries... Please wait.
+                </div>
+              </div>
+            )}
+
             {excelError && (
               <div className="p-4 bg-red-950/20 border border-red-500/20 rounded-xl text-xs text-red-400 flex items-start gap-2.5 mt-6 font-mono leading-relaxed">
                 <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
@@ -2837,12 +2898,12 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
                   <div className="max-h-40 overflow-y-auto space-y-1.5 custom-scrollbar font-mono pr-2">
                     {invalidRows.map((row) => (
                       <div key={row.index} className="text-[10px] text-neutral-400 border-b border-white/5 pb-1 flex flex-col md:flex-row md:justify-between md:items-start gap-1">
-                        <span>Row {row.originalRow.__rowNum__ !== undefined ? row.originalRow.__rowNum__ + 1 : row.index}:</span>
+                        <span>Row {row.rowNumber}:</span>
                         <div className="text-red-400/90 text-left flex-1 md:pl-2">
                           {row.errors.map((e: string, i: number) => <span key={i} className="block">• {e}</span>)}
                         </div>
                         <span className="text-neutral-500 text-[9px]">
-                          Amount: {row.rawAmountText} | Date: {row.rawDateText}
+                          Staff: {row.rawStaffText} | Amount: {row.rawAmountText} | Converted Date: {row.invoice_date || "—"}
                         </span>
                       </div>
                     ))}
@@ -2861,24 +2922,33 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
                           <th className="py-2.5 px-3 text-left">Row No.</th>
                           <th className="py-2.5 px-3 text-left">Date</th>
                           <th className="py-2.5 px-3 text-left">Type</th>
-                          <th className="py-2.5 px-3 text-left">Staff Roster</th>
+                          <th className="py-2.5 px-3 text-left">Original Staff</th>
+                          <th className="py-2.5 px-3 text-left">Matched Staff</th>
+                          <th className="py-2.5 px-3 text-left">Match Score</th>
                           <th className="py-2.5 px-3 text-left">Plate / Bus</th>
                           <th className="py-2.5 px-3 text-left">Route Line</th>
                           <th className="py-2.5 px-3 text-right">Gross Amount</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5">
-                        {validatedRows.map((row, idx) => (
-                          <tr key={idx} className="hover:bg-neutral-900/40">
-                            <td className="py-2 px-3 text-neutral-500">{row.originalRow.__rowNum__ !== undefined ? row.originalRow.__rowNum__ + 1 : row.index}</td>
-                            <td className="py-2 px-3">{row.invoice_date}</td>
-                            <td className="py-2 px-3">{row.rawTypeText}</td>
-                            <td className="py-2 px-3">{row.rawStaffText}</td>
-                            <td className="py-2 px-3">{row.rawBusText}</td>
-                            <td className="py-2 px-3">{row.rawRouteText}</td>
-                            <td className="py-2 px-3 text-right text-amber-300">{formatCurrency(row.gross_amount)}</td>
-                          </tr>
-                        ))}
+                        {validatedRows.map((row, idx) => {
+                          const displayScore = row.match_score !== undefined && row.match_score !== null
+                            ? `${Math.round(row.match_score * 100)}%`
+                            : "—";
+                          return (
+                            <tr key={idx} className="hover:bg-neutral-900/40">
+                              <td className="py-2 px-3 text-neutral-500">{row.rowNumber}</td>
+                              <td className="py-2 px-3">{row.invoice_date}</td>
+                              <td className="py-2 px-3">{row.invoice_type_name || row.rawTypeText}</td>
+                              <td className="py-2 px-3">{row.staff_name_original || row.rawStaffText}</td>
+                              <td className="py-2 px-3 text-amber-100">{row.matched_staff_name || "—"}</td>
+                              <td className="py-2 px-3 font-semibold text-amber-400 bg-amber-500/5">{displayScore}</td>
+                              <td className="py-2 px-3">{row.rawBusText}</td>
+                              <td className="py-2 px-3">{row.rawRouteText}</td>
+                              <td className="py-2 px-3 text-right text-amber-300">{formatCurrency(row.gross_amount)}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
