@@ -2346,12 +2346,12 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
               {loading ? "Synchronizing worksheet data with cloud..." : "No closed entries resolved matching filter params"}
             </p>
           ) : (
-            <div className="overflow-x-auto relative">
+            <div className="max-h-[520px] overflow-y-auto overflow-x-auto relative rounded-xl border border-white/5 scrollbar-thin scrollbar-thumb-white/10">
               <table className="w-full text-left border-collapse font-sans text-[11px]">
-                <thead>
-                  <tr className="border-b border-white/5 text-[9px] font-mono whitespace-nowrap uppercase tracking-wider text-neutral-400 bg-neutral-900/10">
+                <thead className="sticky top-0 bg-neutral-950 z-15 shadow-[0_1px_0_0_rgba(255,255,255,0.05)]">
+                  <tr className="border-b border-white/5 text-[9px] font-mono whitespace-nowrap uppercase tracking-wider text-neutral-400 bg-neutral-900/80">
                     {activeReport.columns.map((col) => (
-                      <th key={col.key} className={`p-3 font-normal ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}`}>
+                      <th key={col.key} className={`p-3 font-normal sticky top-0 bg-neutral-950 z-15 ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"}`}>
                         {col.label}
                       </th>
                     ))}
