@@ -1987,6 +1987,15 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
     }).format(val).replace("TZS", "TZS ");
   };
 
+  const formatToPreviewDate = (ymdStr: string): string => {
+    if (!ymdStr) return "—";
+    const parts = ymdStr.split("-");
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return ymdStr;
+  };
+
   // Submit manual invoice rows
   const onSubmit = async (data: InvoicesFormValues) => {
     try {
@@ -2079,61 +2088,82 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
         // Parse various date formats robustly
         const parseExcelDateValue = (raw: any): string => {
           if (raw === undefined || raw === null) return "";
+          
+          // Check for Excel serial date
           const num = Number(raw);
-          if (typeof raw === "number" || (!isNaN(num) && String(raw).trim() !== "" && num > 10000)) {
+          if (typeof raw === "number" || (!isNaN(num) && String(raw).trim() !== "" && !String(raw).includes("/") && !String(raw).includes("-") && num > 10000)) {
             try {
               const dateObj = XLSX.SSF.parse_date_code(num);
               if (dateObj) {
                 const y = dateObj.y;
                 const m = String(dateObj.m).padStart(2, "0");
                 const d = String(dateObj.d).padStart(2, "0");
-                return `${y}-${m}-${d}`;
+                // Validate if it is a real date
+                const tempDate = new Date(y, dateObj.m - 1, dateObj.d);
+                if (tempDate.getFullYear() === y && tempDate.getMonth() === dateObj.m - 1 && tempDate.getDate() === dateObj.d) {
+                  return `${y}-${m}-${d}`;
+                }
               }
             } catch (e) {
               console.error("Error parsing serial date:", e);
             }
           }
+
           const str = String(raw).trim();
           if (!str) return "";
 
-          // Support YYYY-MM-DD
-          let m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-          if (m) {
-            return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+          // 1. Try DD/MM/YYYY or DD-MM-YYYY first (comply with 05/06/2026 = 5 June 2026 and preferred DD/MM/YYYY / DD-MM-YYYY)
+          const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+          if (dmyMatch) {
+            const d = parseInt(dmyMatch[1], 10);
+            const m = parseInt(dmyMatch[2], 10);
+            const y = parseInt(dmyMatch[3], 10);
+            if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+              // Check real calendar bounds
+              const tempDate = new Date(y, m - 1, d);
+              if (tempDate.getFullYear() === y && tempDate.getMonth() === m - 1 && tempDate.getDate() === d) {
+                return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+              }
+            }
+            return "";
           }
 
-          // Support DD/MM/YYYY
-          m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-          if (m) {
-            return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+          // 2. Try YYYY-MM-DD or YYYY/MM/DD second
+          const ymdMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+          if (ymdMatch) {
+            const y = parseInt(ymdMatch[1], 10);
+            const m = parseInt(ymdMatch[2], 10);
+            const d = parseInt(ymdMatch[3], 10);
+            if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+              const tempDate = new Date(y, m - 1, d);
+              if (tempDate.getFullYear() === y && tempDate.getMonth() === m - 1 && tempDate.getDate() === d) {
+                return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+              }
+            }
+            return "";
           }
 
-          // Try native Date.parse
-          const parsed = Date.parse(str);
-          if (!isNaN(parsed)) {
-            const dObj = new Date(parsed);
-            const y = dObj.getFullYear();
-            const mo = String(dObj.getMonth() + 1).padStart(2, "0");
-            const d = String(dObj.getDate()).padStart(2, "0");
-            return `${y}-${mo}-${d}`;
-          }
-
-          // Slower manual parsing for strings like "30-May-2026", "30 May 2026"
+          // 3. Try slower word month match
           const monthsAbbr = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
           const monthsFull = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
           
           const wordMonthMatch = str.match(/^(\d{1,2})[\/\-\s]+([a-zA-Z]+)[\/\-\s]+(\d{4})$/);
           if (wordMonthMatch) {
-            const day = wordMonthMatch[1].padStart(2, "0");
+            const day = parseInt(wordMonthMatch[1], 10);
             const monthWord = wordMonthMatch[2].toLowerCase();
-            const year = wordMonthMatch[3];
+            const year = parseInt(wordMonthMatch[3], 10);
             let monthIdx = monthsAbbr.indexOf(monthWord.substring(0, 3));
             if (monthIdx === -1) {
               monthIdx = monthsFull.indexOf(monthWord);
             }
             if (monthIdx !== -1) {
-              const monthStr = String(monthIdx + 1).padStart(2, "0");
-              return `${year}-${monthStr}-${day}`;
+              const m = monthIdx + 1;
+              if (day >= 1 && day <= 31) {
+                const tempDate = new Date(year, monthIdx, day);
+                if (tempDate.getFullYear() === year && tempDate.getMonth() === monthIdx && tempDate.getDate() === day) {
+                  return `${year}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                }
+              }
             }
           }
 
@@ -2183,7 +2213,7 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
           const errorsList: string[] = [];
 
           if (!excelRowDate) {
-            errorsList.push("Invalid invoice date");
+            errorsList.push("Invalid invoice date. Use DD/MM/YYYY.");
           }
           if (!isCellEmpty(rawType) && !matchedTypeId) {
             errorsList.push("Unmatched invoice type name");
@@ -2904,7 +2934,7 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
                           {row.errors.map((e: string, i: number) => <span key={i} className="block">• {e}</span>)}
                         </div>
                         <span className="text-neutral-500 text-[9px]">
-                          Staff: {row.rawStaffText} | Amount: {row.rawAmountText} | Converted Date: {row.invoice_date || "—"}
+                          Staff: {row.rawStaffText} | Amount: {row.rawAmountText} | Converted Date: {row.invoice_date ? formatToPreviewDate(row.invoice_date) : "—"}
                         </span>
                       </div>
                     ))}
@@ -2939,7 +2969,7 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
                           return (
                             <tr key={idx} className="hover:bg-neutral-900/40">
                               <td className="py-2 px-3 text-neutral-500">{row.rowNumber}</td>
-                              <td className="py-2 px-3">{row.invoice_date}</td>
+                              <td className="py-2 px-3">{formatToPreviewDate(row.invoice_date)}</td>
                               <td className="py-2 px-3">{row.invoice_type_name || row.rawTypeText}</td>
                               <td className="py-2 px-3">{row.staff_name_original || row.rawStaffText}</td>
                               <td className="py-2 px-3 text-amber-100">{row.matched_staff_name || "—"}</td>
