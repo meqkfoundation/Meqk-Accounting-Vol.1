@@ -39,7 +39,8 @@ import {
   FileDown,
   Mail,
   Send,
-  Inbox
+  Inbox,
+  Pencil
 } from "lucide-react";
 import { supabase, resolveProfile, getActiveCompanyId } from "../lib/supabase";
 import { jsPDF } from "jspdf";
@@ -2970,11 +2971,136 @@ function InvoicesView({ lookups, currentUserProfile }: { lookups?: any; currentU
 /* ========================================================================== */
 function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { lookups?: any; currentUserProfile?: any; onApprovalsUpdated?: () => void }) {
   const [pendingCash, setPendingCash] = useState<any[]>([]);
+  const [userProfilesMap, setUserProfilesMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [updatingRowId, setUpdatingRowId] = useState<string | null>(null);
   const [selectedStatuses, setSelectedStatuses] = useState<Record<string, number>>({});
+
+  // Invoice Actions section states
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [invoiceLoading, setInvoiceLoading] = useState(true);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  
+  // Modal states for editing an invoice
+  const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editTypeId, setEditTypeId] = useState<number | string>("");
+  const [editStaffId, setEditStaffId] = useState<number | string>("");
+  const [editBusId, setEditBusId] = useState<number | string>("");
+  const [editRouteId, setEditRouteId] = useState<number | string>("");
+  const [editAmount, setEditAmount] = useState<number | string>("");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [updatingInvoiceId, setUpdatingInvoiceId] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateSuccess, setUpdateSuccess] = useState<string | null>(null);
+
+  async function fetchInvoices() {
+    try {
+      setInvoiceLoading(true);
+      setInvoiceError(null);
+      const companyId = currentUserProfile?.company_id;
+      const isSuperUser = currentUserProfile?.company_name === "Meqk Foundation";
+      
+      let q = supabase
+        .from("invoices")
+        .select(`
+          id,
+          invoice_date,
+          invoice_type_id,
+          staff_id,
+          bus_id,
+          route_id,
+          gross_amount,
+          invoice_types(type_name),
+          staffs(full_name),
+          buses(plate_number),
+          routes(route_name)
+        `);
+        
+      if (companyId && !isSuperUser) {
+        q = q.eq("company_id", companyId);
+      }
+      
+      const { data, error: qErr } = await q.order("invoice_date", { ascending: false });
+      if (qErr) throw qErr;
+      
+      setInvoices(data || []);
+    } catch (err: any) {
+      console.error("Error fetching actions invoices:", err);
+      setInvoiceError(err.message || String(err));
+    } finally {
+      setInvoiceLoading(false);
+    }
+  }
+
+  const handleOpenEditModal = (inv: any) => {
+    setSelectedInvoice(inv);
+    setEditDate(inv.invoice_date || "");
+    setEditTypeId(inv.invoice_type_id || "");
+    setEditStaffId(inv.staff_id || "");
+    setEditBusId(inv.bus_id || "");
+    setEditRouteId(inv.route_id || "");
+    setEditAmount(inv.gross_amount || "");
+    setUpdateError(null);
+    setUpdateSuccess(null);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveInvoiceUpdate = async () => {
+    if (!selectedInvoice) return;
+    if (!editDate) {
+      setUpdateError("Invoice date is required");
+      return;
+    }
+    if (!editTypeId) {
+      setUpdateError("Invoice Type is required");
+      return;
+    }
+    if (!editStaffId) {
+      setUpdateError("Staff selection is required");
+      return;
+    }
+    if (isNaN(Number(editAmount)) || Number(editAmount) <= 0) {
+      setUpdateError("Gross Amount must be a positive number");
+      return;
+    }
+    
+    try {
+      setUpdatingInvoiceId(selectedInvoice.id);
+      setUpdateError(null);
+      setUpdateSuccess(null);
+      
+      const { error: saveErr } = await supabase
+        .from("invoices")
+        .update({
+          invoice_date: editDate,
+          invoice_type_id: Number(editTypeId),
+          staff_id: Number(editStaffId),
+          bus_id: editBusId ? Number(editBusId) : null,
+          route_id: editRouteId ? Number(editRouteId) : null,
+          gross_amount: Number(editAmount),
+        })
+        .eq("id", selectedInvoice.id);
+        
+      if (saveErr) throw saveErr;
+      
+      setUpdateSuccess("Invoice updated successfully!");
+      // Refresh list
+      await fetchInvoices();
+      
+      setTimeout(() => {
+        setIsEditModalOpen(false);
+      }, 1500);
+    } catch (err: any) {
+      console.error("Error updating invoice item in Actions section:", err);
+      setUpdateError("Failed to update invoice: " + (err.message || String(err)));
+    } finally {
+      setUpdatingInvoiceId(null);
+    }
+  };
 
   const statuses = lookups?.transactionStatuses || [];
   const pendingStatusObj = statuses.find(
@@ -3001,6 +3127,22 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
         }
       }
 
+      // Fetch user profiles separately to map cash.created_by to full name
+      try {
+        const { data: profileRows, error: pErr } = await supabase
+          .from("user_profiles")
+          .select("id, full_name");
+        if (!pErr && profileRows) {
+          const mapping: Record<string, string> = {};
+          profileRows.forEach((p: any) => {
+            if (p.id) mapping[p.id] = p.full_name || "";
+          });
+          setUserProfilesMap(mapping);
+        }
+      } catch (profileErr) {
+        console.warn("Error fetching profiles mapping inside Actions:", profileErr);
+      }
+
       const companyId = currentUserProfile?.company_id;
       let qCash = supabase
         .from("cash")
@@ -3010,6 +3152,7 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
           transaction_date,
           reference_number,
           status_id,
+          created_by,
           cash_types(type_name),
           staffs(full_name),
           buses(plate_number),
@@ -3043,6 +3186,7 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
 
   useEffect(() => {
     fetchPendingCash();
+    fetchInvoices();
   }, [lookups, pendingStatusId, currentUserProfile]);
 
   const handleUpdateStatus = async (rowId: string) => {
@@ -3129,7 +3273,7 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
         <>
           {/* Desktop view */}
           <div className="hidden lg:block overflow-x-auto pb-6 custom-scrollbar relative z-20">
-            <div className="min-w-[1250px] rounded-2xl bg-[#24283b]/60 backdrop-blur-xl border border-white/10 shadow-2xl p-6 relative">
+            <div className="min-w-[1380px] rounded-2xl bg-[#24283b]/60 backdrop-blur-xl border border-white/10 shadow-2xl p-6 relative">
               <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-amber-500/20 to-transparent"></div>
               
               <div className="flex justify-between items-center pb-4 border-b border-white/5 mb-4">
@@ -3141,7 +3285,7 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
 
               <div className="space-y-2">
                 {/* Headers */}
-                <div className="grid grid-cols-[100px_80px_1.2fr_0.8fr_1fr_1.1fr_1.1fr_150px_110px_150px] gap-2 bg-neutral-900/40 text-[10px] font-mono uppercase tracking-wider text-neutral-400 px-3 py-2.5 rounded-xl border border-white/5">
+                <div className="grid grid-cols-[100px_80px_1.2fr_0.8fr_1fr_1.1fr_1.1fr_150px_110px_150px_130px] gap-2 bg-neutral-900/40 text-[10px] font-mono uppercase tracking-wider text-neutral-400 px-3 py-2.5 rounded-xl border border-white/5">
                   <div>Date</div>
                   <div>T.Type</div>
                   <div>Staff</div>
@@ -3152,6 +3296,7 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
                   <div>Reference</div>
                   <div className="text-right">Amount</div>
                   <div className="text-center">Action</div>
+                  <div className="text-right pr-2">User</div>
                 </div>
 
                 {/* Rows */}
@@ -3159,7 +3304,7 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
                   {pendingCash.map((row) => (
                     <div
                       key={row.id}
-                      className="grid grid-cols-[100px_80px_1.2fr_0.8fr_1fr_1.1fr_1.1fr_150px_110px_150px] gap-2 items-center p-2.5 rounded-xl border border-white/5 bg-neutral-950/20 hover:bg-neutral-900/40 transition-all"
+                      className="grid grid-cols-[100px_80px_1.2fr_0.8fr_1fr_1.1fr_1.1fr_150px_110px_150px_130px] gap-2 items-center p-2.5 rounded-xl border border-white/5 bg-neutral-950/20 hover:bg-neutral-900/40 transition-all"
                     >
                       <div className="text-xs font-mono text-neutral-400">
                         {row.transaction_date}
@@ -3190,14 +3335,14 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
                       </div>
                       <div className="flex gap-2 items-center">
                         <select
-                          value={selectedStatuses[row.id] || ""}
-                          onChange={(e) => {
-                            setSelectedStatuses(prev => ({
-                              ...prev,
-                              [row.id]: Number(e.target.value)
-                            }));
-                          }}
-                          className="bg-[#0c0c0c] border border-white/10 text-neutral-200 text-xs rounded-lg p-1 w-full focus:outline-none focus:border-amber-500/50"
+                           value={selectedStatuses[row.id] || ""}
+                           onChange={(e) => {
+                             setSelectedStatuses(prev => ({
+                               ...prev,
+                               [row.id]: Number(e.target.value)
+                             }));
+                           }}
+                           className="bg-[#0c0c0c] border border-white/10 text-neutral-200 text-xs rounded-lg p-1 w-full focus:outline-none focus:border-amber-500/50"
                         >
                           {statuses.map((s: any) => (
                             <option key={s.id} value={s.id}>
@@ -3216,6 +3361,9 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
                             "Apply"
                           )}
                         </button>
+                      </div>
+                      <div className="text-xs font-mono text-neutral-400 text-right truncate pr-2">
+                        {row.created_by ? (userProfilesMap[row.created_by] || row.created_by) : "—"}
                       </div>
                     </div>
                   ))}
@@ -3272,6 +3420,12 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
                     <span className="text-neutral-500 block text-[9px] uppercase font-mono">Reference</span>
                     <span className="text-neutral-300 font-mono truncate block">{row.reference_number || "—"}</span>
                   </div>
+                  <div>
+                    <span className="text-neutral-500 block text-[9px] uppercase font-mono">User</span>
+                    <span className="text-neutral-300 font-mono truncate block">
+                      {row.created_by ? (userProfilesMap[row.created_by] || row.created_by) : "—"}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="pt-3 border-t border-white/5 flex gap-2 items-center">
@@ -3309,12 +3463,377 @@ function ActionsView({ lookups, currentUserProfile, onApprovalsUpdated }: { look
           </div>
         </>
       )}
+
+      {/* ==================================================================== */}
+      {/* INVOICE ACTIONS REGISTRY SECTION                                    */}
+      {/* ==================================================================== */}
+      <div className="rounded-2xl bg-[#1e2235]/50 backdrop-blur-xl border border-white/10 shadow-2xl p-6 relative mt-6">
+        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-amber-500/20 to-transparent"></div>
+        
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b border-white/5 mb-4 gap-4">
+          <div>
+            <span className="text-[10px] font-mono tracking-widest text-amber-500 uppercase">Saved Invoices</span>
+            <h2 className="text-sm font-semibold text-white mt-1">Invoice Actions Registry</h2>
+          </div>
+          {/* Search Bar */}
+          <div className="relative w-full md:w-72">
+            <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+              <Search className="h-3.5 w-3.5 text-neutral-400" />
+            </span>
+            <input
+              type="text"
+              value={invoiceSearch}
+              onChange={(e) => setInvoiceSearch(e.target.value)}
+              placeholder="Search (date, staff, plate, route, amount)..."
+              className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl py-2 pl-9 pr-4 text-xs font-mono text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-amber-500/50"
+            />
+          </div>
+        </div>
+
+        {invoiceError && (
+          <div className="p-3 bg-red-950/20 border border-red-500/25 rounded-xl text-xs text-red-400 mb-4 font-mono">
+            <strong>Error loading invoices: </strong> {invoiceError}
+          </div>
+        )}
+
+        {/* Desktop View */}
+        <div className="hidden lg:block overflow-x-auto custom-scrollbar">
+          <div className="min-w-[1100px] space-y-2">
+            {/* Headers */}
+            <div className="grid grid-cols-[110px_1.2fr_1.5fr_1fr_1.2fr_120px_100px] gap-2 bg-neutral-900/40 text-[10px] font-mono uppercase tracking-wider text-neutral-400 px-3 py-2.5 rounded-xl border border-white/5">
+              <div>Date</div>
+              <div>Invoice Type</div>
+              <div>Staff / Agent</div>
+              <div>Bus / Plate</div>
+              <div>Route Line</div>
+              <div className="text-right">Gross Amount</div>
+              <div className="text-center">Action</div>
+            </div>
+
+            {/* Invoices List with inner scroll */}
+            <div className="max-h-[380px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+              {invoiceLoading ? (
+                <div className="p-6 text-center font-mono text-[11px] animate-pulse uppercase text-neutral-400">
+                  Resynchronizing invoice log items...
+                </div>
+              ) : invoices.length === 0 ? (
+                <div className="p-6 text-center font-mono text-[11px] text-neutral-500">
+                  No invoices retrieved
+                </div>
+              ) : invoices.filter(inv => {
+                const q = invoiceSearch.toLowerCase().trim();
+                if (!q) return true;
+                const dStr = inv.invoice_date ? String(inv.invoice_date).toLowerCase() : "";
+                const tStr = inv.invoice_types?.type_name ? String(inv.invoice_types.type_name).toLowerCase() : "";
+                const sStr = inv.staffs?.full_name ? String(inv.staffs.full_name).toLowerCase() : "";
+                const bStr = inv.buses?.plate_number ? String(inv.buses.plate_number).toLowerCase() : "";
+                const rStr = inv.routes?.route_name ? String(inv.routes.route_name).toLowerCase() : "";
+                const aStr = inv.gross_amount ? String(inv.gross_amount).toLowerCase() : "";
+                return dStr.includes(q) || tStr.includes(q) || sStr.includes(q) || bStr.includes(q) || rStr.includes(q) || aStr.includes(q);
+              }).length === 0 ? (
+                <div className="p-6 text-center font-mono text-[11px] text-neutral-500">
+                  No matches found for search query
+                </div>
+              ) : (
+                invoices.filter(inv => {
+                  const q = invoiceSearch.toLowerCase().trim();
+                  if (!q) return true;
+                  const dStr = inv.invoice_date ? String(inv.invoice_date).toLowerCase() : "";
+                  const tStr = inv.invoice_types?.type_name ? String(inv.invoice_types.type_name).toLowerCase() : "";
+                  const sStr = inv.staffs?.full_name ? String(inv.staffs.full_name).toLowerCase() : "";
+                  const bStr = inv.buses?.plate_number ? String(inv.buses.plate_number).toLowerCase() : "";
+                  const rStr = inv.routes?.route_name ? String(inv.routes.route_name).toLowerCase() : "";
+                  const aStr = inv.gross_amount ? String(inv.gross_amount).toLowerCase() : "";
+                  return dStr.includes(q) || tStr.includes(q) || sStr.includes(q) || bStr.includes(q) || rStr.includes(q) || aStr.includes(q);
+                }).map((row) => (
+                  <div
+                    key={row.id}
+                    className="grid grid-cols-[110px_1.2fr_1.5fr_1fr_1.2fr_120px_100px] gap-2 items-center p-2.5 rounded-xl border border-white/5 bg-neutral-950/20 hover:bg-neutral-900/40 transition-all font-sans text-neutral-300"
+                  >
+                    <div className="text-xs font-mono text-neutral-400">{row.invoice_date || "—"}</div>
+                    <div className="text-xs font-medium text-white truncate">{row.invoice_types?.type_name || "—"}</div>
+                    <div className="text-xs text-neutral-300 truncate">{row.staffs?.full_name || "—"}</div>
+                    <div className="text-xs font-mono text-neutral-400 truncate">{row.buses?.plate_number || "—"}</div>
+                    <div className="text-xs text-neutral-300 truncate">{row.routes?.route_name || "—"}</div>
+                    <div className="text-xs font-mono font-medium text-right text-amber-400">{formatTZS(row.gross_amount)}</div>
+                    <div className="flex justify-center">
+                      <button
+                        onClick={() => handleOpenEditModal(row)}
+                        className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 text-amber-300 hover:text-white text-[10px] font-semibold rounded-lg flex items-center gap-1 cursor-pointer transition-all uppercase tracking-wider"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile View */}
+        <div className="block lg:hidden space-y-4 max-h-[480px] overflow-y-auto pr-1 custom-scrollbar">
+          {invoiceLoading ? (
+            <div className="p-6 text-center font-mono text-[11px] animate-pulse text-neutral-400">
+              Resynchronizing invoice log items...
+            </div>
+          ) : invoices.length === 0 ? (
+            <div className="p-6 text-center font-mono text-[11px] text-neutral-500">
+              No invoices retrieved
+            </div>
+          ) : invoices.filter(inv => {
+            const q = invoiceSearch.toLowerCase().trim();
+            if (!q) return true;
+            const dStr = inv.invoice_date ? String(inv.invoice_date).toLowerCase() : "";
+            const tStr = inv.invoice_types?.type_name ? String(inv.invoice_types.type_name).toLowerCase() : "";
+            const sStr = inv.staffs?.full_name ? String(inv.staffs.full_name).toLowerCase() : "";
+            const bStr = inv.buses?.plate_number ? String(inv.buses.plate_number).toLowerCase() : "";
+            const rStr = inv.routes?.route_name ? String(inv.routes.route_name).toLowerCase() : "";
+            const aStr = inv.gross_amount ? String(inv.gross_amount).toLowerCase() : "";
+            return dStr.includes(q) || tStr.includes(q) || sStr.includes(q) || bStr.includes(q) || rStr.includes(q) || aStr.includes(q);
+          }).length === 0 ? (
+            <div className="p-6 text-center font-mono text-[11px] text-neutral-500">
+              No matches found for search query
+            </div>
+          ) : (
+            invoices.filter(inv => {
+              const q = invoiceSearch.toLowerCase().trim();
+              if (!q) return true;
+              const dStr = inv.invoice_date ? String(inv.invoice_date).toLowerCase() : "";
+              const tStr = inv.invoice_types?.type_name ? String(inv.invoice_types.type_name).toLowerCase() : "";
+              const sStr = inv.staffs?.full_name ? String(inv.staffs.full_name).toLowerCase() : "";
+              const bStr = inv.buses?.plate_number ? String(inv.buses.plate_number).toLowerCase() : "";
+              const rStr = inv.routes?.route_name ? String(inv.routes.route_name).toLowerCase() : "";
+              const aStr = inv.gross_amount ? String(inv.gross_amount).toLowerCase() : "";
+              return dStr.includes(q) || tStr.includes(q) || sStr.includes(q) || bStr.includes(q) || rStr.includes(q) || aStr.includes(q);
+            }).map((row) => (
+              <div
+                key={row.id}
+                className="rounded-2xl bg-[#0c0c0c]/85 border border-white/5 p-4 space-y-3 relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-amber-500/20 to-transparent"></div>
+                
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[9px] font-mono text-amber-500/80 uppercase">
+                      {row.invoice_types?.type_name || "Invoice"}
+                    </span>
+                    <h4 className="text-xs font-semibold text-white mt-0.5">
+                      {row.staffs?.full_name || "—"}
+                    </h4>
+                  </div>
+                  <span className="font-mono text-xs text-amber-400 font-bold">
+                    {formatTZS(row.gross_amount)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 pt-2 border-t border-white/5 text-[11px]">
+                  <div>
+                    <span className="text-neutral-500 block text-[9px] uppercase font-mono">Date</span>
+                    <span className="text-neutral-300 font-mono">{row.invoice_date || "—"}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-500 block text-[9px] uppercase font-mono">Bus / Plate</span>
+                    <span className="text-neutral-300 font-mono truncate block">{row.buses?.plate_number || "—"}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-neutral-500 block text-[9px] uppercase font-mono">Route Line</span>
+                    <span className="text-neutral-300 truncate block">{row.routes?.route_name || "—"}</span>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-white/5 flex justify-end">
+                  <button
+                    onClick={() => handleOpenEditModal(row)}
+                    className="px-4 py-1.5 bg-amber-500/15 border border-amber-500/30 hover:bg-amber-500/25 text-amber-300 text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit Invoice
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
+      {/* EDIT MODAL DIALOG                                                   */}
+      {/* ==================================================================== */}
+      <AnimatePresence>
+        {isEditModalOpen && selectedInvoice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsEditModalOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+
+            {/* Modal Body */}
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#151726] border border-white/10 rounded-2xl p-6 w-full max-w-lg shadow-2xl relative z-10 text-neutral-300 flex flex-col max-h-[90vh]"
+            >
+              <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-500/50 to-transparent"></div>
+              
+              <div className="flex justify-between items-center pb-4 border-b border-white/5 mb-4">
+                <div>
+                  <span className="text-[10px] font-mono tracking-widest text-amber-500 uppercase">Operation Worksheet</span>
+                  <h3 className="text-base font-semibold text-white mt-1">Edit Selected Invoice Record</h3>
+                </div>
+                <button
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="text-neutral-400 hover:text-white text-lg font-mono px-2 py-1 bg-white/5 hover:bg-white/10 rounded-lg cursor-pointer"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Error & Success indicators inside the modal */}
+              {updateError && (
+                <div className="p-3 bg-red-950/20 border border-red-500/20 rounded-xl text-xs text-red-400 mb-4 font-mono">
+                  {updateError}
+                </div>
+              )}
+              {updateSuccess && (
+                <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 mb-4 font-mono animate-pulse">
+                  {updateSuccess}
+                </div>
+              )}
+
+              {/* Form inputs with custom lookups */}
+              <div className="space-y-4 overflow-y-auto pr-1 flex-1 custom-scrollbar">
+                {/* Date Input */}
+                <div>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase block mb-1">Invoice Date *</label>
+                  <input
+                    type="date"
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-neutral-200 focus:outline-none focus:border-amber-500/50 font-mono"
+                  />
+                </div>
+
+                {/* Type Selection */}
+                <div>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase block mb-1">Invoice Type *</label>
+                  <select
+                    value={editTypeId}
+                    onChange={(e) => setEditTypeId(e.target.value)}
+                    className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-neutral-200 focus:outline-none focus:focus:border-amber-500/50"
+                  >
+                    <option value="">-- Select Type --</option>
+                    {(lookups?.invoiceTypes || []).map((t: any) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Staff Selection */}
+                <div>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase block mb-1">Staff / Agent Member *</label>
+                  <select
+                    value={editStaffId}
+                    onChange={(e) => setEditStaffId(e.target.value)}
+                    className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-neutral-200 focus:outline-none focus:focus:border-amber-500/50"
+                  >
+                    <option value="">-- Select Staff --</option>
+                    {(lookups?.staffs || []).map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Bus plate selection (optional) */}
+                <div>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase block mb-1">Bus / Plate Number (Optional)</label>
+                  <select
+                    value={editBusId}
+                    onChange={(e) => setEditBusId(e.target.value)}
+                    className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-neutral-200 focus:outline-none focus:focus:border-amber-500/50 font-mono"
+                  >
+                    <option value="">-- None (Null) --</option>
+                    {(lookups?.buses || []).map((b: any) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Route selection (optional) */}
+                <div>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase block mb-1">Route Line (Optional)</label>
+                  <select
+                    value={editRouteId}
+                    onChange={(e) => setEditRouteId(e.target.value)}
+                    className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-neutral-200 focus:outline-none focus:focus:border-amber-500/50"
+                  >
+                    <option value="">-- None (Null) --</option>
+                    {(lookups?.routes || []).map((r: any) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Gross Amount */}
+                <div>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase block mb-1">Gross Amount (TZS) *</label>
+                  <input
+                    type="number"
+                    value={editAmount}
+                    onChange={(e) => setEditAmount(e.target.value)}
+                    placeholder="Enter gross ledger amount..."
+                    className="w-full bg-[#0c0c0c] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-neutral-200 focus:outline-none focus:border-amber-500/50 font-mono"
+                  />
+                  <p className="text-[10px] font-mono text-neutral-500 mt-1">
+                    Value format standard matching DB limits.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Operations footer */}
+              <div className="pt-4 border-t border-white/5 mt-6 flex justify-end gap-3 shrink-0 font-sans">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="px-4 py-2.5 bg-neutral-900 border border-white/5 hover:bg-neutral-850 text-neutral-300 text-xs font-semibold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={updatingInvoiceId !== null}
+                  onClick={handleSaveInvoiceUpdate}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-black text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-lg shadow-amber-500/10"
+                >
+                  {updatingInvoiceId !== null ? (
+                    <>
+                      <Coins className="h-3.5 w-3.5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-3.5 w-3.5" />
+                      Save Changes
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 /* ========================================================================== */
-/* VIEW COMPONENT 4: MEMOS (Internal Finance Communications Panel)            */
+/* VIEW COMPONENT 4: VIEW COMPONENT 4: MEMOS (Internal Finance Panel)         */
 /* ========================================================================== */
 function MemosView({ currentUserProfile, onMemosUpdated }: { currentUserProfile?: any; onMemosUpdated?: () => void }) {
   const [activeSubTab, setActiveSubTab] = useState<"inbox" | "sent">("inbox");
@@ -4302,6 +4821,24 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
     return REPORTS_CONFIG.find(r => r.id === selectedReportId);
   }, [selectedReportId]);
 
+  const hasActiveFilters = React.useMemo(() => {
+    const flatFilters = {
+      date_from: filters.date_from,
+      date_to: filters.date_to,
+      month_from: filters.month_from,
+      month_to: filters.month_to,
+      min_amount: filters.min_amount,
+      max_amount: filters.max_amount,
+      ...filters.textFilters
+    };
+    return isFiltered && Object.values(flatFilters).some(
+      value =>
+        value !== "" &&
+        value !== null &&
+        value !== undefined
+    );
+  }, [isFiltered, filters]);
+
   // Fetch report data on selection/filter triggers
   useEffect(() => {
     let isMounted = true;
@@ -4323,7 +4860,7 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
       setError(null);
 
       try {
-        let data: any[] | null = null;
+        let finalRows: any[] = [];
         let selectStr = "";
         const viewName = activeReport.view;
 
@@ -4350,11 +4887,48 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
           } else if (activeReport.id === "daily_buses") {
             selectStr = "date,conductor,driver,bus,route,one_way,enroute,total,user_id,company_id";
           }
+        }
 
-          let query = supabase.from(viewName).select(selectStr).eq("company_id", activeCompanyId);
+        const columnsList = selectStr || activeReport.columns.map(c => c.key).join(",");
 
-          if (isFiltered) {
-            // Apply Date range filter if applicable
+        if (!hasActiveFilters) {
+          // No filters applied -> Limit = 100 rows, preview only
+          let query = supabase.from(viewName).select(columnsList);
+          
+          const hasCompanyIdCol = isAffectedReport || activeReport.columns.some(c => c.key === "company_id");
+          if (hasCompanyIdCol) {
+            query = query.eq("company_id", activeCompanyId);
+          }
+          
+          query = query.limit(100);
+
+          const { data: fetchRes, error: fetchErr } = await query;
+          if (fetchErr) {
+            console.error(
+              `Error loading report data in preview:\n` +
+              `Report Name: ${activeReport.name}\n` +
+              `View Name: ${viewName}\n` +
+              `Error details:`, fetchErr
+            );
+            throw fetchErr;
+          }
+          finalRows = fetchRes || [];
+        } else {
+          // Filters applied -> fetch ALL matching rows using pagination loop internally
+          const batchSize = 1000;
+          let from = 0;
+          let hasMore = true;
+
+          while (hasMore) {
+            let query = supabase.from(viewName).select(columnsList);
+
+            const hasCompanyIdCol = isAffectedReport || activeReport.columns.some(c => c.key === "company_id");
+            if (hasCompanyIdCol) {
+              query = query.eq("company_id", activeCompanyId);
+            }
+
+            // Apply filters BEFORE range selection
+            // 1. Date Range
             const hasDateCol = activeReport.columns.some(c => c.key === "date");
             if (hasDateCol) {
               if (filters.date_from) {
@@ -4365,7 +4939,7 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
               }
             }
 
-            // Apply Month range filter if applicable
+            // 2. Month Range
             const hasMonthCol = activeReport.columns.some(c => c.key === "month");
             if (hasMonthCol) {
               if (filters.month_from) {
@@ -4376,84 +4950,7 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
               }
             }
 
-            // Apply text filters
-            if (filters.textFilters) {
-              Object.entries(filters.textFilters).forEach(([colKey, textVal]) => {
-                const colExists = activeReport.columns.some(c => c.key === colKey);
-                if (colExists && colKey !== "user_id" && colKey !== "company_id" && textVal) {
-                  query = query.ilike(colKey, `%${textVal}%`);
-                }
-              });
-            }
-
-            // Apply numeric filters dynamically
-            const numCols = activeReport.columns.filter(c => c.type === "number");
-            if (numCols.length > 0) {
-              const firstNumKey = numCols[0].key;
-              if (filters.min_amount) {
-                query = query.gte(firstNumKey, Number(filters.min_amount));
-              }
-              if (filters.max_amount) {
-                query = query.lte(firstNumKey, Number(filters.max_amount));
-              }
-            }
-          } else {
-            // Default select limit is 100 rows
-            query = query.limit(100);
-          }
-
-          const { data: fetchRes, error: fetchErr } = await query;
-          if (fetchErr) {
-            console.error(
-              `Error loading affected report data:\n` +
-              `Report Name: ${activeReport.name}\n` +
-              `View Name: ${viewName}\n` +
-              `Select String: ${selectStr}\n` +
-              `activeCompanyId: ${activeCompanyId}\n` +
-              `Error details:`, fetchErr
-            );
-            throw fetchErr;
-          }
-          data = fetchRes;
-          console.log(
-            `[DEV LOG] Success fetching affected report:\n` +
-            `activeCompanyId: ${activeCompanyId}\n` +
-            `Report Name: ${activeReport.name}\n` +
-            `View Name: ${viewName}\n` +
-            `Selected columns: ${selectStr}\n` +
-            `Returned rows count: ${data?.length || 0}`
-          );
-        } else {
-          // General clean query builder for other reports
-          const columnsList = activeReport.columns.map(c => c.key).join(",");
-          let query = supabase.from(activeReport.view).select(columnsList);
-
-          const hasCompanyIdCol = activeReport.columns.some(c => c.key === "company_id");
-          if (hasCompanyIdCol) {
-            query = query.eq("company_id", activeCompanyId);
-          }
-
-          if (isFiltered) {
-            const hasDate = activeReport.columns.some(c => c.type === "date" && c.key === "date");
-            if (hasDate) {
-              if (filters.date_from) {
-                query = query.gte("date", filters.date_from);
-              }
-              if (filters.date_to) {
-                query = query.lte("date", filters.date_to);
-              }
-            }
-
-            const hasMonth = activeReport.columns.some(c => c.type === "month" && c.key === "month");
-            if (hasMonth) {
-              if (filters.month_from) {
-                query = query.gte("month", filters.month_from);
-              }
-              if (filters.month_to) {
-                query = query.lte("month", filters.month_to);
-              }
-            }
-
+            // 3. Text search
             if (filters.textFilters) {
               Object.entries(filters.textFilters).forEach(([colKey, textVal]) => {
                 const colExists = activeReport.columns.some(c => c.key === colKey);
@@ -4463,6 +4960,7 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
               });
             }
 
+            // 4. Numeric Range
             const numCols = activeReport.columns.filter(c => c.type === "number");
             if (numCols.length > 0) {
               const firstNumKey = numCols[0].key;
@@ -4473,34 +4971,34 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
                 query = query.lte(firstNumKey, Number(filters.max_amount));
               }
             }
-          } else {
-            query = query.limit(100);
-          }
 
-          const { data: fetchRes, error: selectErr } = await query;
-          if (selectErr) {
-            console.error(
-              `Error loading report data:\n` +
-              `Report Name: ${activeReport.name}\n` +
-              `View Name: ${viewName}\n` +
-              `Select String: ${columnsList}\n` +
-              `Error details:`, selectErr
-            );
-            throw selectErr;
+            const { data: batchData, error: batchErr } = await query.range(from, from + batchSize - 1);
+            if (batchErr) {
+              console.error(`Error loading report data in query loop:`, batchErr);
+              throw batchErr;
+            }
+
+            if (!batchData || batchData.length === 0) {
+              hasMore = false;
+              break;
+            }
+
+            finalRows.push(...batchData);
+
+            if (isMounted) {
+              setReportData([...finalRows]);
+            }
+
+            if (batchData.length < batchSize) {
+              hasMore = false;
+            } else {
+              from += batchSize;
+            }
           }
-          data = fetchRes;
-          console.log(
-            `[DEV LOG] Success fetching general report:\n` +
-            `activeCompanyId: ${activeCompanyId}\n` +
-            `Report Name: ${activeReport.name}\n` +
-            `View Name: ${viewName}\n` +
-            `Selected columns: ${columnsList}\n` +
-            `Returned rows count: ${data?.length || 0}`
-          );
         }
 
         if (isMounted) {
-          setReportData(data || []);
+          setReportData(finalRows);
         }
       } catch (err: any) {
         if (isMounted) {
@@ -4518,7 +5016,7 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
     return () => {
       isMounted = false;
     };
-  }, [selectedReportId, isFiltered, appliedFiltersTrigger, activeReport, currentUserProfile?.company_id]);
+  }, [selectedReportId, isFiltered, appliedFiltersTrigger, activeReport, currentUserProfile?.company_id, hasActiveFilters]);
 
   const formatTZS = (val: any) => {
     if (val === undefined || val === null || isNaN(Number(val))) return "TZS 0";
@@ -5018,7 +5516,7 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
             <h2 className="text-lg font-semibold text-amber-400 uppercase tracking-widest font-serif">{companyName}</h2>
             <h3 className="text-xs font-light text-neutral-300 uppercase tracking-wider mt-1">{activeReport.name}</h3>
             <span className="text-[9px] font-mono text-neutral-500 mt-2 block uppercase">
-              {isFiltered ? "Filtered Dataset (All Columns & Rows Fetched)" : "System Preview Limit (Showing first 100 rows)"}
+              {hasActiveFilters ? `Showing ${reportData.length} filtered records` : "Preview Mode (100 rows)"}
             </span>
           </div>
 
@@ -5061,7 +5559,14 @@ function ReportsView({ currentUserProfile }: { currentUserProfile?: any }) {
           {isLoading ? (
             <div className="py-20 text-center flex flex-col items-center justify-center min-h-[300px]">
               <Coins className="h-8 w-8 text-amber-500 mb-3 animate-spin" />
-              <h4 className="text-sm font-medium text-neutral-300">Compiling ledger database rows...</h4>
+              <h4 className="text-sm font-medium text-neutral-300">
+                {hasActiveFilters ? "Loading filtered records..." : "Compiling ledger database rows..."}
+              </h4>
+              {hasActiveFilters && reportData.length > 0 && (
+                <p className="text-xs text-amber-400 font-mono mt-1 animate-pulse">
+                  Loaded {reportData.length} records...
+                </p>
+              )}
               <p className="text-xs text-neutral-500 font-mono mt-1">Interrogating {activeReport.view} with selected rules.</p>
             </div>
           ) : error ? (
