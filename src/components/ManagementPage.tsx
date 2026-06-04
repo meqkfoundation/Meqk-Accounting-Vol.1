@@ -1892,6 +1892,9 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
   const [officeQuery, setOfficeQuery] = useState("");
   const [statusQuery, setStatusQuery] = useState("");
   const [occupationQuery, setOccupationQuery] = useState("");
+  const [accountQuery, setAccountQuery] = useState("");
+  const [natureQuery, setNatureQuery] = useState("");
+  const [invoiceTypeQuery, setInvoiceTypeQuery] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<any[]>([]);
@@ -1910,12 +1913,44 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
     setDateFrom(""); setDateTo(""); setMonthFrom(""); setMonthTo("");
     setMinAmount(""); setMaxAmount(""); setStaffQuery(""); setBusQuery("");
     setRouteQuery(""); setOfficeQuery(""); setStatusQuery(""); setOccupationQuery("");
+    setAccountQuery(""); setNatureQuery(""); setInvoiceTypeQuery("");
   }, [department]);
 
   const activeReport = useMemo(() => {
     const list = [...FINANCE_REPORTS, ...OPERATIONS_REPORTS, ...HR_REPORTS];
     return list.find(r => r.id === selectedReportId) || null;
   }, [selectedReportId]);
+
+  const hasFilter = (key: string) => {
+    if (!activeReport) return false;
+    
+    if (key === "date") return activeReport.columns.some(c => c.type === "date" || c.key.includes("date"));
+    if (key === "month") return activeReport.columns.some(c => c.type === "month" || c.key === "month");
+    if (key === "staff") return activeReport.columns.some(c => c.key === "staff" || c.key === "staff_name" || c.key === "conductor" || c.key === "driver" || c.key === "full_name");
+    if (key === "bus") return activeReport.columns.some(c => c.key === "bus" || c.key === "plate_number");
+    if (key === "route") return activeReport.columns.some(c => c.key === "route");
+    if (key === "office") return activeReport.columns.some(c => c.key === "office");
+    if (key === "amount") return activeReport.columns.some(c => c.type === "number" && (c.key.includes("amount") || c.key.includes("income") || c.key.includes("salary") || c.key.includes("net_profit") || c.key.includes("debit") || c.key.includes("credit")));
+    if (key === "account") return activeReport.columns.some(c => c.key === "account");
+    if (key === "occupation") return activeReport.columns.some(c => c.key === "occupation");
+    if (key === "nature") return activeReport.columns.some(c => c.key === "nature");
+    if (key === "invoice_type") return activeReport.columns.some(c => c.key === "invoice_type" || c.key === "invoice");
+    
+    return false;
+  };
+
+  const hasActiveFilters = useMemo(() => {
+    return !!(
+      dateFrom || dateTo || monthFrom || monthTo || minAmount || maxAmount ||
+      staffQuery.trim() || busQuery.trim() || routeQuery.trim() || officeQuery.trim() ||
+      statusQuery.trim() || occupationQuery.trim() ||
+      accountQuery.trim() || natureQuery.trim() || invoiceTypeQuery.trim()
+    );
+  }, [
+    dateFrom, dateTo, monthFrom, monthTo, minAmount, maxAmount,
+    staffQuery, busQuery, routeQuery, officeQuery, statusQuery, occupationQuery,
+    accountQuery, natureQuery, invoiceTypeQuery
+  ]);
 
   // Execute database report load
   const loadData = async (e?: React.FormEvent) => {
@@ -1927,47 +1962,91 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
       setError(null);
       const companyId = currentUserProfile?.company_id;
 
-      let q = supabase.from(activeReport.view).select("*");
+      const buildFilteredQuery = () => {
+        let q = supabase.from(activeReport.view).select("*");
 
-      if (companyId) {
-        q = q.eq("company_id", companyId);
+        if (companyId) {
+          q = q.eq("company_id", companyId);
+        }
+
+        // Apply filters:
+        // 1. Date filters
+        if (hasFilter("date")) {
+          const dateCol = activeReport.columns.find(c => c.type === "date")?.key || "date";
+          if (dateFrom) q = q.gte(dateCol, dateFrom);
+          if (dateTo) q = q.lte(dateCol, dateTo);
+        }
+
+        // 2. Month filters
+        if (hasFilter("month")) {
+          const monthCol = activeReport.columns.find(c => c.type === "month")?.key || "month";
+          if (monthFrom) q = q.gte(monthCol, monthFrom);
+          if (monthTo) q = q.lte(monthCol, monthTo);
+        }
+
+        // 3. Amount filters
+        if (hasFilter("amount")) {
+          if (minAmount) q = q.gte("amount", Number(minAmount));
+          if (maxAmount) q = q.lte("amount", Number(maxAmount));
+        }
+
+        // 4. String queries
+        if (hasFilter("staff") && staffQuery.trim()) {
+          const key = activeReport.columns.find(c => c.key === "staff_name") ? "staff_name" : "staff";
+          q = q.ilike(key, `%${staffQuery.trim()}%`);
+        }
+        if (hasFilter("bus") && busQuery.trim()) {
+          const key = activeReport.columns.find(c => c.key === "plate_number") ? "plate_number" : "bus";
+          q = q.ilike(key, `%${busQuery.trim()}%`);
+        }
+        if (hasFilter("route") && routeQuery.trim()) q = q.ilike("route", `%${routeQuery.trim()}%`);
+        if (hasFilter("office") && officeQuery.trim()) q = q.ilike("office", `%${officeQuery.trim()}%`);
+        if (hasFilter("status") && statusQuery.trim()) q = q.ilike("status", `%${statusQuery.trim()}%`);
+        if (hasFilter("occupation") && occupationQuery.trim()) q = q.ilike("occupation", `%${occupationQuery.trim()}%`);
+        if (hasFilter("account") && accountQuery.trim()) q = q.ilike("account", `%${accountQuery.trim()}%`);
+        if (hasFilter("nature") && natureQuery.trim()) q = q.ilike("nature", `%${natureQuery.trim()}%`);
+        if (hasFilter("invoice_type") && invoiceTypeQuery.trim()) {
+          const key = activeReport.columns.find(c => c.key === "invoice_type") ? "invoice_type" : "invoice";
+          q = q.ilike(key, `%${invoiceTypeQuery.trim()}%`);
+        }
+
+        return q;
+      };
+
+      if (!hasActiveFilters) {
+        // Unfiltered -> Limit = 100 rows, preview only
+        const q = buildFilteredQuery().limit(100);
+        const { data, error: qErr } = await q;
+        if (qErr) throw qErr;
+        setReportData(data || []);
+      } else {
+        // Filtered -> Fetch ALL with pagination loop internally
+        let finalRows: any[] = [];
+        const batchSize = 1000;
+        let from = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const q = buildFilteredQuery().range(from, from + batchSize - 1);
+          const { data: batchData, error: batchErr } = await q;
+          if (batchErr) throw batchErr;
+
+          if (!batchData || batchData.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          finalRows.push(...batchData);
+          setReportData([...finalRows]);
+
+          if (batchData.length < batchSize) {
+            hasMore = false;
+          } else {
+            from += batchSize;
+          }
+        }
+        setReportData(finalRows);
       }
-
-      // 1. Date filters
-      const dateCol = activeReport.columns.find(c => c.type === "date")?.key || "date";
-      if (dateFrom) q = q.gte(dateCol, dateFrom);
-      if (dateTo) q = q.lte(dateCol, dateTo);
-
-      // 2. Month filters
-      const monthCol = activeReport.columns.find(c => c.type === "month")?.key || "month";
-      if (monthFrom) q = q.gte(monthCol, monthFrom);
-      if (monthTo) q = q.lte(monthCol, monthTo);
-
-      // 3. Amount filters
-      if (minAmount) q = q.gte("amount", Number(minAmount));
-      if (maxAmount) q = q.lte("amount", Number(maxAmount));
-
-      // 4. String queries
-      if (staffQuery.trim()) {
-        const key = activeReport.columns.find(c => c.key === "staff_name") ? "staff_name" : "staff";
-        q = q.ilike(key, `%${staffQuery.trim()}%`);
-      }
-      if (busQuery.trim()) {
-        const key = activeReport.columns.find(c => c.key === "plate_number") ? "plate_number" : "bus";
-        q = q.ilike(key, `%${busQuery.trim()}%`);
-      }
-      if (routeQuery.trim()) q = q.ilike("route", `%${routeQuery.trim()}%`);
-      if (officeQuery.trim()) q = q.ilike("office", `%${officeQuery.trim()}%`);
-      if (statusQuery.trim()) q = q.ilike("status", `%${statusQuery.trim()}%`);
-      if (occupationQuery.trim()) q = q.ilike("occupation", `%${occupationQuery.trim()}%`);
-
-      // Limit caps to prevent sandbox locks
-      q = q.limit(100);
-
-      const { data, error: qErr } = await q;
-      if (qErr) throw qErr;
-      setReportData(data || []);
-
     } catch (err: any) {
       console.error("Failed fetching dynamic report:", err);
       setError(err.message || "Failed retrieving database ledger reports.");
@@ -2091,11 +2170,6 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
     }
   };
 
-  const hasFilter = (key: string) => {
-    if (!activeReport) return false;
-    return activeReport.columns.some(c => c.key === key) || (key === "date" && activeReport.columns.some(c => c.type === "date")) || (key === "month" && activeReport.columns.some(c => c.type === "month")) || (key === "staff" && activeReport.columns.some(c => c.key === "staff" || c.key === "staff_name"));
-  };
-
   return (
     <div className="space-y-6 relative z-25">
       
@@ -2165,7 +2239,9 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
           {/* Workspace Title bar */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-white/5 pb-4">
             <div>
-              <span className="text-[9px] font-mono tracking-wider uppercase text-amber-500 font-semibold">Active Executive Worksheet</span>
+              <span className="text-[9px] font-mono tracking-wider uppercase text-amber-500 font-semibold">
+                {loading ? "Loading filtered records..." : (hasActiveFilters ? `Showing ${reportData.length} filtered records` : "Preview Mode (100 rows)")}
+              </span>
               <h3 className="text-sm font-serif font-black uppercase text-white tracking-wide mt-0.5">
                 {activeReport.name} <span className="text-amber-500 font-normal font-mono text-[10.5px] ml-1">// {companyName}</span>
               </h3>
@@ -2317,6 +2393,58 @@ function ReportsSection({ currentUserProfile, companyName }: { currentUserProfil
                     value={officeQuery}
                     onChange={(e) => setOfficeQuery(e.target.value)}
                     placeholder="Terminal station..."
+                    className="w-full bg-black/80 border border-white/10 rounded-lg px-2.5 py-1 text-[11px] text-white focus:outline-none focus:border-amber-500/50 h-[32px]"
+                  />
+                </div>
+              )}
+
+              {hasFilter("account") && (
+                <div>
+                  <label className="block text-[8px] uppercase tracking-wider font-mono text-neutral-450 mb-1">Account Filter</label>
+                  <input
+                    type="text"
+                    value={accountQuery}
+                    onChange={(e) => setAccountQuery(e.target.value)}
+                    placeholder="E.g. Cash, Revenue..."
+                    className="w-full bg-black/80 border border-white/10 rounded-lg px-2.5 py-1 text-[11px] text-white focus:outline-none focus:border-amber-500/50 h-[32px]"
+                  />
+                </div>
+              )}
+
+              {hasFilter("occupation") && (
+                <div>
+                  <label className="block text-[8px] uppercase tracking-wider font-mono text-neutral-450 mb-1">Occupation Filter</label>
+                  <input
+                    type="text"
+                    value={occupationQuery}
+                    onChange={(e) => setOccupationQuery(e.target.value)}
+                    placeholder="Occupation name..."
+                    className="w-full bg-black/80 border border-white/10 rounded-lg px-2.5 py-1 text-[11px] text-white focus:outline-none focus:border-amber-500/50 h-[32px]"
+                  />
+                </div>
+              )}
+
+              {hasFilter("nature") && (
+                <div>
+                  <label className="block text-[8px] uppercase tracking-wider font-mono text-neutral-450 mb-1">Nature Filter</label>
+                  <input
+                    type="text"
+                    value={natureQuery}
+                    onChange={(e) => setNatureQuery(e.target.value)}
+                    placeholder="E.g. Debit, Credit..."
+                    className="w-full bg-black/80 border border-white/10 rounded-lg px-2.5 py-1 text-[11px] text-white focus:outline-none focus:border-amber-500/50 h-[32px]"
+                  />
+                </div>
+              )}
+
+              {hasFilter("invoice_type") && (
+                <div>
+                  <label className="block text-[8px] uppercase tracking-wider font-mono text-neutral-450 mb-1">Invoice Type Filter</label>
+                  <input
+                    type="text"
+                    value={invoiceTypeQuery}
+                    onChange={(e) => setInvoiceTypeQuery(e.target.value)}
+                    placeholder="Invoice type..."
                     className="w-full bg-black/80 border border-white/10 rounded-lg px-2.5 py-1 text-[11px] text-white focus:outline-none focus:border-amber-500/50 h-[32px]"
                   />
                 </div>
@@ -2511,68 +2639,81 @@ function AnalysisSection({ currentUserProfile }: { currentUserProfile: any }) {
     }
 
     try {
-      let q = supabase.from(viewName).select("*");
-      if (companyId) {
-        q = q.eq("company_id", companyId);
-      }
-
-      // 1. Date filters (only for average_fare which has date column)
-      if (selectedReport === "average_fare") {
-        if (filters.dateFrom) q = q.gte("date", filters.dateFrom);
-        if (filters.dateTo) q = q.lte("date", filters.dateTo);
-      }
-
-      // 2. Month filters (for monthly_bus / route_fare which have month column)
-      if (selectedReport !== "average_fare") {
-        if (filters.monthFrom) q = q.gte("month", filters.monthFrom);
-        if (filters.monthTo) q = q.lte("month", filters.monthTo);
-      }
-
-      // 3. Searchable filters
-      if (filters.staff && selectedReport === "average_fare") {
-        q = q.ilike("staff", `%${filters.staff}%`);
-      }
-      if (filters.bus) {
-        q = q.ilike("bus", `%${filters.bus}%`);
-      }
-      if (filters.route && selectedReport !== "bus_fare") {
-        q = q.ilike("route", `%${filters.route}%`);
-      }
-
-      // Limit rows - if filters are applied, let user choose but fall back to higher buffer if needed
-      const currentLimit = hasActiveFilters ? 1000 : limit;
-      q = q.limit(currentLimit);
-
-      let { data, error } = await q;
-
-      if (error && (error.code === "42703" || error.message?.includes("column"))) {
-        // Fallback without company_id filter
-        let retryQ = supabase.from(viewName).select("*");
-        if (selectedReport === "average_fare") {
-          if (filters.dateFrom) retryQ = retryQ.gte("date", filters.dateFrom);
-          if (filters.dateTo) retryQ = retryQ.lte("date", filters.dateTo);
-        } else {
-          if (filters.monthFrom) retryQ = retryQ.gte("month", filters.monthFrom);
-          if (filters.monthTo) retryQ = retryQ.lte("month", filters.monthTo);
+      const buildFilteredQuery = (withCompanyIdFilter: boolean) => {
+        let q = supabase.from(viewName).select("*");
+        if (companyId && withCompanyIdFilter) {
+          q = q.eq("company_id", companyId);
         }
+
+        // 1. Date filters (only for average_fare which has date column)
+        if (selectedReport === "average_fare") {
+          if (filters.dateFrom) q = q.gte("date", filters.dateFrom);
+          if (filters.dateTo) q = q.lte("date", filters.dateTo);
+        }
+
+        // 2. Month filters (for monthly_bus / route_fare which have month column)
+        if (selectedReport !== "average_fare") {
+          if (filters.monthFrom) q = q.gte("month", filters.monthFrom);
+          if (filters.monthTo) q = q.lte("month", filters.monthTo);
+        }
+
+        // 3. Searchable filters
         if (filters.staff && selectedReport === "average_fare") {
-          retryQ = retryQ.ilike("staff", `%${filters.staff}%`);
+          q = q.ilike("staff", `%${filters.staff}%`);
         }
         if (filters.bus) {
-          retryQ = retryQ.ilike("bus", `%${filters.bus}%`);
+          q = q.ilike("bus", `%${filters.bus}%`);
         }
         if (filters.route && selectedReport !== "bus_fare") {
-          retryQ = retryQ.ilike("route", `%${filters.route}%`);
+          q = q.ilike("route", `%${filters.route}%`);
         }
-        retryQ = retryQ.limit(currentLimit);
-        const { data: retryData, error: retryError } = await retryQ;
-        if (retryError) throw retryError;
-        data = retryData;
-      } else if (error) {
-        throw error;
+
+        return q;
+      };
+
+      // Test query build with company_id first
+      let withCompanyIdFilter = true;
+      if (companyId) {
+        const { error: testErr } = await supabase.from(viewName).select("company_id").limit(1);
+        if (testErr && (testErr.code === "42703" || testErr.message?.includes("column"))) {
+          withCompanyIdFilter = false;
+        }
       }
 
-      setTableData(data || []);
+      if (!hasActiveFilters) {
+        // Unfiltered: load only 100 rows preview
+        const q = buildFilteredQuery(withCompanyIdFilter).limit(100);
+        const { data, error } = await q;
+        if (error) throw error;
+        setTableData(data || []);
+      } else {
+        // Filtered: Retrieve ALL matched rows with pagination loop
+        let finalRows: any[] = [];
+        const batchSize = 1000;
+        let from = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const q = buildFilteredQuery(withCompanyIdFilter).range(from, from + batchSize - 1);
+          const { data: batchData, error: batchErr } = await q;
+          if (batchErr) throw batchErr;
+
+          if (!batchData || batchData.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          finalRows.push(...batchData);
+          setTableData([...finalRows]);
+
+          if (batchData.length < batchSize) {
+            hasMore = false;
+          } else {
+            from += batchSize;
+          }
+        }
+        setTableData(finalRows);
+      }
     } catch (err: any) {
       console.error("Error loading tabular data:", err);
       setTableError(err.message || "Failed to load tabular report.");
@@ -3028,7 +3169,9 @@ function AnalysisSection({ currentUserProfile }: { currentUserProfile: any }) {
                 {/* Information Header */}
                 <div className="flex justify-between items-center px-1 font-mono text-[9px] text-neutral-450 uppercase">
                   <span>Audit preview ledger matched rows</span>
-                  <span className="text-amber-400 font-semibold">{tableData.length} records</span>
+                  <span className="text-amber-400 font-semibold">
+                    {hasActiveFilters ? `Showing ${tableData.length} filtered records` : `Preview Mode (${tableData.length} rows preview)`}
+                  </span>
                 </div>
 
                 {/* Live spreadsheet table */}
