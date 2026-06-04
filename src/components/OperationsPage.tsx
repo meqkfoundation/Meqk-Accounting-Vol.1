@@ -2814,71 +2814,98 @@ function ReportsView({ currentUserProfile }: ReportsViewProps) {
       setLoading(true);
       setFetchError(null);
       
-      let q = supabase.from(activeReport.viewName).select("*");
-      
-      if (currentUserProfile?.company_id) {
-        q = q.eq("company_id", currentUserProfile.company_id);
-      }
-      
-      // Apply date range filters if appropriate
-      if (hasDateFilter) {
-        const dateCol = activeReport.columns.some(col => col.key === "date") ? "date" : "purchase_date";
-        if (startDate) {
-          q = q.gte(dateCol, startDate);
+      const buildFilteredQuery = () => {
+        let q = supabase.from(activeReport.viewName).select("*");
+        
+        if (currentUserProfile?.company_id) {
+          q = q.eq("company_id", currentUserProfile.company_id);
         }
-        if (endDate) {
-          q = q.lte(dateCol, endDate);
+        
+        // Apply date range filters if appropriate
+        if (hasDateFilter) {
+          const dateCol = activeReport.columns.some(col => col.key === "date") ? "date" : "purchase_date";
+          if (startDate) {
+            q = q.gte(dateCol, startDate);
+          }
+          if (endDate) {
+            q = q.lte(dateCol, endDate);
+          }
         }
-      }
 
-      // Apply month range filters if appropriate
-      if (hasMonthFilter) {
-        if (startMonth) {
-          q = q.gte("month", startMonth);
+        // Apply month range filters if appropriate
+        if (hasMonthFilter) {
+          if (startMonth) {
+            q = q.gte("month", startMonth);
+          }
+          if (endMonth) {
+            q = q.lte("month", endMonth);
+          }
         }
-        if (endMonth) {
-          q = q.lte("month", endMonth);
+
+        // Build text search filters
+        if (hasBusFilter && busQuery.trim()) {
+          const busCol = activeReport.columns.some(col => col.key === "bus") ? "bus" : "plate_number";
+          q = q.ilike(busCol, `%${busQuery.trim()}%`);
         }
-      }
+        if (hasRouteFilter && routeQuery.trim()) {
+          q = q.ilike("route", `%${routeQuery.trim()}%`);
+        }
+        if (hasConductorFilter && conductorQuery.trim()) {
+          q = q.ilike("conductor", `%${conductorQuery.trim()}%`);
+        }
+        if (hasDriverFilter && driverQuery.trim()) {
+          q = q.ilike("driver", `%${driverQuery.trim()}%`);
+        }
+        if (hasOfficeFilter && officeQuery.trim()) {
+          q = q.ilike("office", `%${officeQuery.trim()}%`);
+        }
+        if (hasStatusFilter && statusQuery.trim()) {
+          q = q.ilike("status", `%${statusQuery.trim()}%`);
+        }
 
-      // Build text search filters
-      if (hasBusFilter && busQuery.trim()) {
-        const busCol = activeReport.columns.some(col => col.key === "bus") ? "bus" : "plate_number";
-        q = q.ilike(busCol, `%${busQuery.trim()}%`);
-      }
-      if (hasRouteFilter && routeQuery.trim()) {
-        q = q.ilike("route", `%${routeQuery.trim()}%`);
-      }
-      if (hasConductorFilter && conductorQuery.trim()) {
-        q = q.ilike("conductor", `%${conductorQuery.trim()}%`);
-      }
-      if (hasDriverFilter && driverQuery.trim()) {
-        q = q.ilike("driver", `%${driverQuery.trim()}%`);
-      }
-      if (hasOfficeFilter && officeQuery.trim()) {
-        q = q.ilike("office", `%${officeQuery.trim()}%`);
-      }
-      if (hasStatusFilter && statusQuery.trim()) {
-        q = q.ilike("status", `%${statusQuery.trim()}%`);
-      }
+        // Order logically where applicable
+        if (activeReport.columns.some(col => col.key === "date")) {
+          q = q.order("date", { ascending: false });
+        } else if (activeReport.columns.some(col => col.key === "month")) {
+          q = q.order("month", { ascending: false });
+        }
 
-      // Order logically where applicable
-      if (activeReport.columns.some(col => col.key === "date")) {
-        q = q.order("date", { ascending: false });
-      } else if (activeReport.columns.some(col => col.key === "month")) {
-        q = q.order("month", { ascending: false });
-      }
+        return q;
+      };
 
-      // Default limit 100 rows, but override if filters are applied
       if (!isAnyFilterApplied) {
-        q = q.limit(100);
+        let q = buildFilteredQuery().limit(100);
+        const { data, error } = await q;
+        if (error) throw error;
+        setReportData(data || []);
       } else {
-        q = q.limit(10000); // safety cap for massive database pull
-      }
+        // Filters applied -> fetch ALL matching rows using pagination loop internally
+        let finalRows: any[] = [];
+        const batchSize = 1000;
+        let from = 0;
+        let hasMore = true;
 
-      const { data, error } = await q;
-      if (error) throw error;
-      setReportData(data || []);
+        while (hasMore) {
+          let q = buildFilteredQuery().range(from, from + batchSize - 1);
+          const { data: batchData, error: batchErr } = await q;
+          if (batchErr) throw batchErr;
+
+          if (!batchData || batchData.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          finalRows.push(...batchData);
+          setReportData([...finalRows]);
+
+          if (batchData.length < batchSize) {
+            hasMore = false;
+          } else {
+            from += batchSize;
+          }
+        }
+        setReportData(finalRows);
+      }
     } catch (err: any) {
       console.error(err);
       setFetchError(err.message || "Failed to load report dataset from Supabase.");
@@ -3078,7 +3105,18 @@ function ReportsView({ currentUserProfile }: ReportsViewProps) {
               <FileBarChart className="h-4 w-4 text-emerald-400" />
               <span>{activeReport.name} <span className="text-emerald-500/80 font-mono text-[11px] ml-2 font-normal">// {companyName}</span></span>
             </h3>
-            <p className="text-[11px] text-neutral-400 mt-0.5">{activeReport.description}</p>
+            <p className="text-[11px] text-neutral-400 mt-0.5">
+              {activeReport.description} •{" "}
+              {loading && isAnyFilterApplied ? (
+                <span className="text-emerald-400 font-mono font-semibold animate-pulse">
+                  Loading filtered records... {reportData.length > 0 ? `(Loaded ${reportData.length} records)` : ""}
+                </span>
+              ) : (
+                <span className="text-emerald-400 font-mono font-semibold">
+                  {isAnyFilterApplied ? `Showing ${reportData.length} filtered records` : "Preview Mode (100 rows)"}
+                </span>
+              )}
+            </p>
           </div>
 
           {/* Exporting buttons */}
