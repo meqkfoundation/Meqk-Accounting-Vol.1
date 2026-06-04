@@ -137,6 +137,38 @@ function SearchableSelect({ options, value, onChange, placeholder, disabled }: S
   );
 }
 
+const getReportRowValue = (row: any, key: string) => {
+  if (row[key] !== undefined && row[key] !== null) {
+    return row[key];
+  }
+  // Try fallback columns
+  if (key === "office_id" && row["office"] !== undefined) return row["office"];
+  if (key === "occupation_id" && row["occupation"] !== undefined) return row["occupation"];
+  if (key === "is_active" && row["status"] !== undefined) return row["status"];
+  return undefined;
+};
+
+const formatReportCellValue = (key: string, val: any, lookups: any) => {
+  if (key === "is_active") {
+    if (val === true || String(val).toLowerCase() === "true" || val === "Active Enrollment" || val === "Active") return "Active";
+    if (val === false || String(val).toLowerCase() === "false" || val === "Not Active") return "Not Active";
+    return val === undefined || val === null ? "" : String(val);
+  }
+  if (key === "occupation_id" && val) {
+    const found = lookups?.occupations?.find((o: any) => o.id === val);
+    if (found) return found.name;
+    // Fallback if already display name
+    return String(val);
+  }
+  if (key === "office_id" && val) {
+    const found = lookups?.offices?.find((o: any) => o.id === val);
+    if (found) return found.name;
+    // Fallback if already display name
+    return String(val);
+  }
+  return val === undefined || val === null ? "" : String(val);
+};
+
 export default function HRPage({ session, onLogout }: HRPageProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>("dashboard");
@@ -180,6 +212,7 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
   const [reportData, setReportData] = useState<any[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [staffDetailsStatusKey, setStaffDetailsStatusKey] = useState<string>("status");
 
   // Filters state
   const [filterMonthFrom, setFilterMonthFrom] = useState("");
@@ -320,19 +353,19 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
       icon: IdCard,
       hasCompanyId: true,
       columns: [
-        { key: "full_name", label: "Full Name", type: "text" as const, align: "left" as const },
-        { key: "office", label: "Office", type: "text" as const, align: "left" as const },
+        { key: "full_name", label: "Name", type: "text" as const, align: "left" as const },
         { key: "occupation", label: "Occupation", type: "text" as const, align: "left" as const },
+        { key: "office", label: "Office", type: "text" as const, align: "left" as const },
         { key: "phone_number", label: "Phone Number", type: "text" as const, align: "left" as const },
         { key: "account_number", label: "Account Number", type: "text" as const, align: "left" as const },
         { key: "tin_number", label: "TIN", type: "text" as const, align: "left" as const },
-        { key: "nida_number", label: "NIDA Number", type: "text" as const, align: "left" as const },
+        { key: "nida_number", label: "NIDA", type: "text" as const, align: "left" as const },
         { key: "address", label: "Address", type: "text" as const, align: "left" as const },
         { key: "employment_date", label: "Employment Date", type: "date" as const, align: "left" as const },
-        { key: "status", label: "Status", type: "text" as const, align: "center" as const }
+        { key: staffDetailsStatusKey, label: "Status", type: "text" as const, align: "center" as const }
       ]
     }
-  ], []);
+  ], [staffDetailsStatusKey]);
 
   const activeReport = useMemo(() => {
     return reportsConfig.find(r => r.id === activeReportId) || null;
@@ -349,75 +382,138 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
       setReportLoading(true);
       setReportError(null);
 
-      let query = supabase.from(reportObj.view).select("*");
-
-      // Check for company_id filtering requirement
       const companyId = currentUserProfile?.company_id;
-      if (companyId && reportObj.hasCompanyId) {
-        query = query.eq("company_id", companyId);
-      }
-
+      const isSuperUser = currentUserProfile?.company_name === "Meqk Foundation";
       const activeAndAppliedFilters = forceFilters !== undefined ? forceFilters : appliedFilters;
+      const hasActiveFilters = activeAndAppliedFilters.isFiltered;
 
-      if (activeAndAppliedFilters.isFiltered) {
-        // Apply Month filter
-        if (activeAndAppliedFilters.monthFrom) {
-          query = query.gte("month", activeAndAppliedFilters.monthFrom);
-        }
-        if (activeAndAppliedFilters.monthTo) {
-          query = query.lte("month", activeAndAppliedFilters.monthTo);
-        }
-
-        // Apply Date filter (e.g., employment_date)
-        const dateCol = reportObj.columns.find(c => c.type === "date")?.key;
-        if (dateCol) {
-          if (activeAndAppliedFilters.dateFrom) {
-            query = query.gte(dateCol, activeAndAppliedFilters.dateFrom);
+      // Define a helper to build the query base (so it's identical for preview and range pages)
+      const buildQueryBase = async () => {
+        let query;
+        if (reportObj.id === "staff_details") {
+          // Check staff details columns
+          let testCols = "full_name,occupation,office,phone_number,account_number,tin_number,nida_number,address,employment_date,status";
+          if (companyId && !isSuperUser) {
+            testCols += ",company_id";
           }
-          if (activeAndAppliedFilters.dateTo) {
-            query = query.lte(dateCol, activeAndAppliedFilters.dateTo);
+          let testQuery = supabase.from("v_staff_details").select(testCols).limit(1);
+          if (companyId && !isSuperUser) {
+            testQuery = testQuery.eq("company_id", companyId);
           }
-        }
+          const { error: testErr } = await testQuery;
 
-        // Apply Text filters: staff, office, occupation, status
-        const textCols = reportObj.columns.filter(c => c.type === "text").map(c => c.key);
-
-        if (activeAndAppliedFilters.staff) {
-          const staffCol = textCols.find(k => k === "staff" || k === "staff_name" || k === "full_name");
-          if (staffCol) {
-            query = query.ilike(staffCol, `%${activeAndAppliedFilters.staff}%`);
+          if (testErr) {
+            setStaffDetailsStatusKey("is_active");
+            let fallbackCols = "full_name,occupation,office,phone_number,account_number,tin_number,nida_number,address,employment_date,is_active";
+            if (companyId && !isSuperUser) {
+              fallbackCols += ",company_id";
+            }
+            query = supabase.from("v_staff_details").select(fallbackCols);
+          } else {
+            setStaffDetailsStatusKey("status");
+            query = supabase.from("v_staff_details").select(testCols);
           }
-        }
 
-        if (activeAndAppliedFilters.office) {
-          const officeCol = textCols.find(k => k === "office");
-          if (officeCol) {
-            query = query.ilike(officeCol, `%${activeAndAppliedFilters.office}%`);
+          if (companyId && !isSuperUser) {
+            query = query.eq("company_id", companyId);
           }
-        }
-
-        if (activeAndAppliedFilters.occupation) {
-          const occCol = textCols.find(k => k === "occupation");
-          if (occCol) {
-            query = query.ilike(occCol, `%${activeAndAppliedFilters.occupation}%`);
+        } else {
+          query = supabase.from(reportObj.view).select("*");
+          if (companyId && reportObj.hasCompanyId) {
+            query = query.eq("company_id", companyId);
           }
         }
 
-        if (activeAndAppliedFilters.status) {
-          const statusCol = textCols.find(k => k === "status");
-          if (statusCol) {
-            query = query.ilike(statusCol, `%${activeAndAppliedFilters.status}%`);
+        // Apply filters
+        if (hasActiveFilters) {
+          // Apply Month filter
+          if (activeAndAppliedFilters.monthFrom) {
+            query = query.gte("month", activeAndAppliedFilters.monthFrom);
+          }
+          if (activeAndAppliedFilters.monthTo) {
+            query = query.lte("month", activeAndAppliedFilters.monthTo);
+          }
+
+          // Apply Date filter (e.g., employment_date)
+          const dateCol = reportObj.columns.find(c => c.type === "date")?.key;
+          if (dateCol) {
+            if (activeAndAppliedFilters.dateFrom) {
+              query = query.gte(dateCol, activeAndAppliedFilters.dateFrom);
+            }
+            if (activeAndAppliedFilters.dateTo) {
+              query = query.lte(dateCol, activeAndAppliedFilters.dateTo);
+            }
+          }
+
+          // Apply Text filters: staff, office, occupation, status
+          const textCols = reportObj.columns.filter(c => c.type === "text").map(c => c.key);
+
+          if (activeAndAppliedFilters.staff) {
+            const staffCol = textCols.find(k => k === "staff" || k === "staff_name" || k === "full_name");
+            if (staffCol) {
+              query = query.ilike(staffCol, `%${activeAndAppliedFilters.staff}%`);
+            }
+          }
+
+          if (activeAndAppliedFilters.office) {
+            const officeCol = textCols.find(k => k === "office");
+            if (officeCol) {
+              query = query.ilike(officeCol, `%${activeAndAppliedFilters.office}%`);
+            }
+          }
+
+          if (activeAndAppliedFilters.occupation) {
+            const occCol = textCols.find(k => k === "occupation");
+            if (occCol) {
+              query = query.ilike(occCol, `%${activeAndAppliedFilters.occupation}%`);
+            }
+          }
+
+          if (activeAndAppliedFilters.status) {
+            const statusCol = textCols.find(k => k === "status");
+            if (statusCol) {
+              query = query.ilike(statusCol, `%${activeAndAppliedFilters.status}%`);
+            }
           }
         }
+
+        return query;
+      };
+
+      if (!hasActiveFilters) {
+        // Preview mode (unfiltered): limit 100
+        const queryBase = await buildQueryBase();
+        const { data, error } = await queryBase.limit(100);
+        if (error) throw error;
+        setReportData(data || []);
       } else {
-        // Default preview limit of 100 rows
-        query = query.limit(100);
+        // Filtered: Retrieve ALL rows with pagination loop
+        let finalRows: any[] = [];
+        const batchSize = 1000;
+        let from = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const queryBase = await buildQueryBase();
+          const { data: batchData, error: batchErr } = await queryBase.range(from, from + batchSize - 1);
+          if (batchErr) throw batchErr;
+
+          if (!batchData || batchData.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          finalRows.push(...batchData);
+          setReportData([...finalRows]);
+
+          if (batchData.length < batchSize) {
+            hasMore = false;
+          } else {
+            from += batchSize;
+          }
+        }
+        setReportData(finalRows);
       }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      setReportData(data || []);
     } catch (err: any) {
       console.error("Failed fetching report data:", err);
       setReportError(err.message || String(err));
@@ -503,14 +599,14 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
       reportData.forEach(row => {
         aoa.push(
           activeReport.columns.map(col => {
-            const val = row[col.key];
-            if (col.type === "number" && val !== undefined && val !== null) {
-              return Number(val);
+            const rawVal = getReportRowValue(row, col.key);
+            if (col.type === "number" && rawVal !== undefined && rawVal !== null) {
+              return Number(rawVal);
             }
-            if (col.type === "date" && val) {
-              return String(val).split("T")[0];
+            if (col.type === "date" && rawVal) {
+              return String(rawVal).split("T")[0];
             }
-            return val === undefined || val === null ? "" : String(val);
+            return formatReportCellValue(col.key, rawVal, lookups);
           })
         );
       });
@@ -585,17 +681,17 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
       const headers = activeReport.columns.map(c => c.label);
       const rows = reportData.map(row => {
         return activeReport.columns.map(col => {
-          const val = row[col.key];
+          const rawVal = getReportRowValue(row, col.key);
           if ([
             "basic_salary", "allowances", "gross_salary", "deductions", "net_pay",
             "shortage", "amount", "income", "total_wages", "total_paid"
           ].includes(col.key)) {
-            return formatTZSMoney(val);
+            return formatTZSMoney(rawVal);
           }
-          if (col.type === "date" && val) {
-            return String(val).split("T")[0];
+          if (col.type === "date" && rawVal) {
+            return String(rawVal).split("T")[0];
           }
-          return val === undefined || val === null ? "" : String(val);
+          return formatReportCellValue(col.key, rawVal, lookups);
         });
       });
 
@@ -721,7 +817,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
   const loadAllLookups = async () => {
     if (!currentUserProfile) return;
     const companyId = currentUserProfile.company_id;
-    if (!companyId) return;
+    const isSuperUser = currentUserProfile.company_name === "Meqk Foundation";
+    if (!companyId && !isSuperUser) return;
 
     try {
       setLookups(prev => ({ ...prev, loading: true }));
@@ -741,7 +838,9 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
         qRoutes = qRoutes.eq("company_id", companyId);
         qAccounts = qAccounts.eq("company_id", companyId);
         qCategories = qCategories.eq("company_id", companyId);
-        qOffices = qOffices.eq("company_id", companyId);
+        if (!isSuperUser) {
+          qOffices = qOffices.eq("company_id", companyId);
+        }
       }
 
       const [
@@ -2211,7 +2310,7 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-[9px] font-mono uppercase text-neutral-400 mb-1">Office Station</label>
+                                  <label className="block text-[9px] font-mono uppercase text-neutral-400 mb-1">Assigned Station Branch</label>
                                   <SearchableSelect
                                     options={lookups.offices}
                                     value={selectedStaff.office_id}
@@ -2754,7 +2853,11 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                           </h4>
                         </div>
                         <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg px-2.5 py-1 text-[9px] font-mono text-amber-400">
-                          {appliedFilters.isFiltered ? "ALL RECORDS FETCHED (FILTER ACTIVE)" : "100 ROWS PREVIEW LIMIT (UNFILTERED)"}
+                          {appliedFilters.isFiltered 
+                            ? (reportLoading 
+                              ? `Loading filtered records... ${reportData.length > 0 ? `(Loaded ${reportData.length} records)` : ""}` 
+                              : `Showing ${reportData.length} filtered records`)
+                            : "Preview Mode (100 rows)"}
                         </div>
                       </div>
 
@@ -2935,15 +3038,15 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                 {reportData.map((row, rowIdx) => (
                                   <tr key={rowIdx} className="hover:bg-amber-500/[0.01] transition-colors">
                                     {activeReport.columns.map((col) => {
-                                      const val = row[col.key];
+                                      const rawVal = getReportRowValue(row, col.key);
                                       const isNumeric = [
                                         "basic_salary", "allowances", "gross_salary", "deductions", "net_pay",
                                         "shortage", "amount", "income", "total_wages", "total_paid"
                                       ].includes(col.key);
 
                                       // Special Status badge layout
-                                      if (col.key === "status" && val !== undefined) {
-                                        const statusStr = String(val);
+                                      if ((col.key === "status" || col.key === "is_active") && rawVal !== undefined) {
+                                        const statusStr = formatReportCellValue(col.key, rawVal, lookups);
                                         const isActive = statusStr.toLowerCase() === "active" || statusStr.toLowerCase() === "true" || statusStr === "Active Enrollment" || statusStr === "Active";
                                         return (
                                           <td key={col.key} className="p-3 text-center">
@@ -2956,6 +3059,8 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                         );
                                       }
 
+                                      const displayedVal = formatReportCellValue(col.key, rawVal, lookups);
+
                                       return (
                                         <td
                                           key={col.key}
@@ -2964,13 +3069,13 @@ export default function HRPage({ session, onLogout }: HRPageProps) {
                                           }`}
                                         >
                                           {isNumeric ? (
-                                            formatTZSMoney(val)
-                                          ) : col.type === "date" && val ? (
-                                            <span className="font-mono text-[10px]">{String(val).split("T")[0]}</span>
-                                          ) : val === undefined || val === null ? (
+                                            formatTZSMoney(rawVal)
+                                          ) : col.type === "date" && rawVal ? (
+                                            <span className="font-mono text-[10px]">{String(rawVal).split("T")[0]}</span>
+                                          ) : rawVal === undefined || rawVal === null || rawVal === "" ? (
                                             <span className="text-neutral-500">—</span>
                                           ) : (
-                                            String(val)
+                                            displayedVal
                                           )}
                                         </td>
                                       );
